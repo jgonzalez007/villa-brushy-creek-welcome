@@ -1113,46 +1113,62 @@ def pool():
         )
         return _no_cache(Response(html, mimetype="text/html"))
 
-    sensors, setpoints, equipment = classify_pool_devices(snapshot["devices"])
+    try:
+        sensors, setpoints, equipment = classify_pool_devices(snapshot["devices"])
 
-    sensor_html = "".join(
-        POOL_SENSOR_CARD_TEMPLATE.format(label=s["label"], value=s["state"])
-        for s in sensors
-    )
-    setpoint_html = "".join(
-        POOL_SETPOINT_CARD_TEMPLATE.format(
-            key=s["key"],
-            label=s["label"],
-            value=s["state"] or "—",
-            status_label="Heating enabled" if s["is_on"] else "Heating off",
-            status_class="status-on" if s["is_on"] else "status-off",
+        sensor_html = "".join(
+            POOL_SENSOR_CARD_TEMPLATE.format(label=s["label"], value=s["state"])
+            for s in sensors
         )
-        for s in setpoints
-    )
-    equipment_html = "".join(
-        POOL_EQUIPMENT_CARD_TEMPLATE.format(
-            key=e["key"],
-            label=e["label"],
-            status_label="On" if e["is_on"] else "Off",
-            status_class="status-on" if e["is_on"] else "status-off",
-            card_class="equipment-card-on" if e["is_on"] else "",
-            button_label="Turn off" if e["is_on"] else "Turn on",
+        setpoint_html = "".join(
+            POOL_SETPOINT_CARD_TEMPLATE.format(
+                key=s["key"],
+                label=s["label"],
+                value=s["state"] or "—",
+                status_label="Heating enabled" if s["is_on"] else "Heating off",
+                status_class="status-on" if s["is_on"] else "status-off",
+            )
+            for s in setpoints
         )
-        for e in equipment
-    )
+        equipment_html = "".join(
+            POOL_EQUIPMENT_CARD_TEMPLATE.format(
+                key=e["key"],
+                label=e["label"],
+                status_label="On" if e["is_on"] else "Off",
+                status_class="status-on" if e["is_on"] else "status-off",
+                card_class="equipment-card-on" if e["is_on"] else "",
+                button_label="Turn off" if e["is_on"] else "Turn on",
+            )
+            for e in equipment
+        )
 
-    html = POOL_TEMPLATE.format(
-        system_name=snapshot["system_name"],
-        online_badge=(
-            '<span class="online-badge online-yes">Online</span>' if snapshot["online"]
-            else '<span class="online-badge online-no">Offline</span>' if snapshot["online"] is False
-            else ""
-        ),
-        error_banner="",
-        sensor_cards=sensor_html or '<p class="empty-state">No sensor readings available.</p>',
-        setpoint_cards=setpoint_html,
-        equipment_cards=equipment_html or '<p class="empty-state">No controllable equipment found.</p>',
-    )
+        html = POOL_TEMPLATE.format(
+            system_name=snapshot["system_name"],
+            online_badge=(
+                '<span class="online-badge online-yes">Online</span>' if snapshot["online"]
+                else '<span class="online-badge online-no">Offline</span>' if snapshot["online"] is False
+                else ""
+            ),
+            error_banner="",
+            sensor_cards=sensor_html or '<p class="empty-state">No sensor readings available.</p>',
+            setpoint_cards=setpoint_html,
+            equipment_cards=equipment_html or '<p class="empty-state">No controllable equipment found.</p>',
+        )
+    except Exception as e:
+        # Belt-and-suspenders: a fetch can succeed but return data shaped
+        # slightly differently than expected (e.g. an unexpected device
+        # attribute). Show the real error instead of a blank 500 page.
+        print(f"[{datetime.datetime.now()}] /pool render error: "
+              f"{type(e).__name__}: {e}", file=sys.stderr)
+        html = POOL_TEMPLATE.format(
+            system_name=PROPERTY_DISPLAY_NAME,
+            online_badge="",
+            error_banner=f'<div class="error-banner">Error building pool page: '
+                          f'{type(e).__name__}: {e}</div>',
+            sensor_cards="",
+            setpoint_cards="",
+            equipment_cards="",
+        )
     return _no_cache(Response(html, mimetype="text/html"))
 
 
