@@ -9,6 +9,8 @@ services:
     # run their own copy of that thread, multiplying API calls unnecessarily.
     startCommand: gunicorn app:app --workers 1 --threads 4 --timeout 60
     envVars:
+      - key: PYTHON_VERSION
+        value: 3.14.0      # required by the iaqualink package (pool control)
       - key: OWNERREZ_USERNAME
         sync: false        # set manually in Render dashboard, not stored in git
       - key: OWNERREZ_TOKEN
@@ -21,3 +23,7 @@ services:
         value: WPA          # WPA (covers WPA2/WPA3), WEP, or nopass
       - key: CLEANING_TASKS
         sync: false        # optional -- comma-separated list overriding the default checklist
+      - key: IAQUALINK_USERNAME
+        sync: false        # optional -- omit to leave /pool showing "not configured"
+      - key: IAQUALINK_PASSWORD
+        sync: false        # optional -- your iAqualink app login password

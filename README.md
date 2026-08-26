@@ -71,6 +71,44 @@ git push
 
 Render auto-redeploys on every push to `main`.
 
+## Pool control
+
+Visit `/pool` to see live pool/spa readings and control equipment —
+pump, heaters, lights, and other switches — via iAqualink (Jandy/
+Zodiac). Unlike the other admin pages, this one fetches live on every
+page load rather than on an hourly timer, since pump/heater state can
+change at any moment and a stale cache would be actively misleading
+for a control panel.
+
+To enable it, set two environment variables in Render:
+- `IAQUALINK_USERNAME` — the email you use to log into the iAqualink app
+- `IAQUALINK_PASSWORD` — that account's password
+
+Leave them unset and `/pool` shows a "not configured" message instead
+of erroring.
+
+**Important — Python version requirement:** the `iaqualink` package
+this depends on requires Python 3.14+. `render.yaml` already sets
+`PYTHON_VERSION=3.14.0` for you; if you're running this locally instead
+of on Render, make sure your local Python is 3.14 or newer or pool
+control (and only pool control -- everything else still works) won't
+import correctly.
+
+**A note on how this was built:** this uses `iaqualink` (the same
+unofficial, reverse-engineered library your `iaqualink-mcp` project
+wraps) called directly from the Flask app, since a deployed web server
+can't reach the MCP tools available inside a Claude chat -- those only
+work through your desktop app's device bridge. The categorization
+logic (which devices are sensors vs. equipment vs. temperature
+controls) was tested against real device data from your actual pool
+account, but the live login/API calls themselves couldn't be tested
+from the sandbox this was built in (no outbound network access there).
+Check `/pool` right after your first deploy with this enabled -- if
+anything looks off, share the error message and it's a fast fix.
+
+This page has no login — don't share the URL publicly, since it can
+control physical pool equipment.
+
 ## Cleaning checklist
 
 Visit `/cleaning` to see a per-guest cleaning checklist for the next 5
