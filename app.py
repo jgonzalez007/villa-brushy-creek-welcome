@@ -44,6 +44,7 @@ import os
 import sys
 import io
 import base64
+import asyncio
 import threading
 import time
 import datetime
@@ -92,6 +93,14 @@ if os.environ.get("CLEANING_TASKS"):
     CLEANING_TASKS = [t.strip() for t in os.environ["CLEANING_TASKS"].split(",") if t.strip()]
 else:
     CLEANING_TASKS = _DEFAULT_CLEANING_TASKS
+
+# Pool control via iAqualink (Jandy/Zodiac). Uses the `iaqualink` PyPI
+# package (an unofficial, reverse-engineered client library -- Jandy/
+# Zodiac/Fluidra don't publish an official API). Requires Python 3.14+
+# (see render.yaml PYTHON_VERSION). If these aren't set, /pool shows a
+# "not configured" message instead of erroring.
+IAQUALINK_USERNAME = os.environ.get("IAQUALINK_USERNAME")
+IAQUALINK_PASSWORD = os.environ.get("IAQUALINK_PASSWORD")
 
 # In-memory cache of everything the app needs to serve "/", "/manage",
 # and "/cleaning". RLock (not Lock) because route handlers call
@@ -761,7 +770,117 @@ def background_loop():
 
 
 # ---------------------------------------------------------------------------
-# 4. WEB SERVER
+# 4. POOL CONTROL (iAqualink)
+# ---------------------------------------------------------------------------
+# Unlike the OwnerRez data above, pool state is fetched live on every
+# /pool page load rather than cached on an hourly timer -- it's a control
+# panel a host checks occasionally, not a guest-facing display, and
+# pump/heater state can change at any moment (including from the
+# official iAqualink app), so a stale hourly cache would be actively
+# misleading here.
+
+# Sensors: read-only numeric readouts (skip if empty -- some accounts
+# don't have every sensor, e.g. no salt system or no spa).
+_POOL_SENSOR_KEYS = {"pool_temp", "spa_temp", "air_temp", "pool_salinity", "spa_salinity", "orp", "ph"}
+# Diagnostic-only fields that aren't a real control or a useful readout.
+_POOL_SKIP_KEYS = {"is_icl_present", "relay_count"}
+
+
+async def _pool_with_client(fn):
+    try:
+        from iaqualink import AqualinkClient
+    except ImportError:
+        raise RuntimeError(
+            "The 'iaqualink' package isn't installed. Add it to requirements.txt "
+            "(see render.yaml / README) and redeploy."
+        )
+    if not IAQUALINK_USERNAME or not IAQUALINK_PASSWORD:
+        raise RuntimeError(
+            "Missing credentials. Set IAQUALINK_USERNAME and IAQUALINK_PASSWORD "
+            "environment variables before using pool control."
+        )
+    async with AqualinkClient(IAQUALINK_USERNAME, IAQUALINK_PASSWORD) as client:
+        systems = await client.get_systems()
+        if not systems:
+            raise RuntimeError("No pool/spa systems found on this iAqualink account.")
+        system = list(systems.values())[0]  # this account has exactly one system
+        return await fn(system)
+
+
+def _device_to_dict(key, device):
+    return {
+        "key": key,
+        "label": getattr(device, "label", None) or key.replace("_", " ").title(),
+        "state": getattr(device, "state", "") or "",
+        "is_on": getattr(device, "is_on", None),
+    }
+
+
+async def _fetch_pool_snapshot():
+    async def inner(system):
+        devices = await system.get_devices()
+        device_dicts = {k: _device_to_dict(k, v) for k, v in devices.items()}
+        return {
+            "system_name": getattr(system, "name", PROPERTY_DISPLAY_NAME + " Pool"),
+            "online": getattr(system, "online", None),
+            "devices": device_dicts,
+        }
+    return await _pool_with_client(inner)
+
+
+async def _toggle_pool_device(device_key):
+    async def inner(system):
+        devices = await system.get_devices()
+        device = devices.get(device_key)
+        if device is None:
+            raise RuntimeError(f"Unknown pool device: {device_key}")
+        await device.toggle()
+    await _pool_with_client(inner)
+
+
+async def _set_pool_temperature(device_key, temperature):
+    async def inner(system):
+        devices = await system.get_devices()
+        device = devices.get(device_key)
+        if device is None:
+            raise RuntimeError(f"Unknown pool device: {device_key}")
+        await device.set_temperature(temperature)
+    await _pool_with_client(inner)
+
+
+def get_pool_snapshot():
+    """Synchronous wrapper -- Flask routes are sync, iaqualink is async."""
+    return asyncio.run(_fetch_pool_snapshot())
+
+
+def toggle_pool_device(device_key):
+    asyncio.run(_toggle_pool_device(device_key))
+
+
+def set_pool_temperature(device_key, temperature):
+    asyncio.run(_set_pool_temperature(device_key, float(temperature)))
+
+
+def classify_pool_devices(devices):
+    """Splits the raw device dict into three display groups: read-only
+    sensors, adjustable temperature set points, and on/off equipment."""
+    sensors, setpoints, equipment = [], [], []
+    for key, d in devices.items():
+        if key in _POOL_SKIP_KEYS:
+            continue
+        if key in _POOL_SENSOR_KEYS:
+            if d["state"] != "":
+                sensors.append(d)
+        elif key.endswith("_set_point"):
+            setpoints.append(d)
+        elif isinstance(d["is_on"], bool):
+            equipment.append(d)
+        # else: unavailable/diagnostic field with nothing useful to show
+    return sensors, setpoints, equipment
+
+
+# ---------------------------------------------------------------------------
+# 5. WEB SERVER
 # ---------------------------------------------------------------------------
 app = Flask(__name__)
 
@@ -965,6 +1084,100 @@ def cleaning_reset():
     return redirect("/cleaning#" + booking_key)
 
 
+@app.route("/pool")
+def pool():
+    error = None
+    snapshot = None
+    if not IAQUALINK_USERNAME or not IAQUALINK_PASSWORD:
+        error = ("Pool control isn't configured yet. Set IAQUALINK_USERNAME and "
+                  "IAQUALINK_PASSWORD environment variables to enable this page.")
+    else:
+        try:
+            snapshot = get_pool_snapshot()
+        except Exception as e:
+            error = str(e)
+
+    if error:
+        html = POOL_TEMPLATE.format(
+            system_name=PROPERTY_DISPLAY_NAME,
+            online_badge="",
+            error_banner=f'<div class="error-banner">{error}</div>',
+            sensor_cards="",
+            setpoint_cards="",
+            equipment_cards="",
+        )
+        return _no_cache(Response(html, mimetype="text/html"))
+
+    sensors, setpoints, equipment = classify_pool_devices(snapshot["devices"])
+
+    sensor_html = "".join(
+        POOL_SENSOR_CARD_TEMPLATE.format(label=s["label"], value=s["state"])
+        for s in sensors
+    )
+    setpoint_html = "".join(
+        POOL_SETPOINT_CARD_TEMPLATE.format(
+            key=s["key"],
+            label=s["label"],
+            value=s["state"] or "—",
+            status_label="Heating enabled" if s["is_on"] else "Heating off",
+            status_class="status-on" if s["is_on"] else "status-off",
+        )
+        for s in setpoints
+    )
+    equipment_html = "".join(
+        POOL_EQUIPMENT_CARD_TEMPLATE.format(
+            key=e["key"],
+            label=e["label"],
+            status_label="On" if e["is_on"] else "Off",
+            status_class="status-on" if e["is_on"] else "status-off",
+            card_class="equipment-card-on" if e["is_on"] else "",
+            button_label="Turn off" if e["is_on"] else "Turn on",
+        )
+        for e in equipment
+    )
+
+    html = POOL_TEMPLATE.format(
+        system_name=snapshot["system_name"],
+        online_badge=(
+            '<span class="online-badge online-yes">Online</span>' if snapshot["online"]
+            else '<span class="online-badge online-no">Offline</span>' if snapshot["online"] is False
+            else ""
+        ),
+        error_banner="",
+        sensor_cards=sensor_html or '<p class="empty-state">No sensor readings available.</p>',
+        setpoint_cards=setpoint_html,
+        equipment_cards=equipment_html or '<p class="empty-state">No controllable equipment found.</p>',
+    )
+    return _no_cache(Response(html, mimetype="text/html"))
+
+
+@app.route("/pool/toggle", methods=["POST"])
+def pool_toggle():
+    device_key = request.form.get("device_key")
+    if not device_key:
+        return "Missing device_key", 400
+    try:
+        toggle_pool_device(device_key)
+    except Exception as e:
+        return f"Failed to toggle device: {e}", 500
+    return redirect("/pool")
+
+
+@app.route("/pool/set_temperature", methods=["POST"])
+def pool_set_temperature():
+    device_key = request.form.get("device_key")
+    temperature = request.form.get("temperature")
+    if not device_key or not temperature:
+        return "Missing device_key or temperature", 400
+    try:
+        set_pool_temperature(device_key, temperature)
+    except (ValueError, TypeError):
+        return "Invalid temperature value", 400
+    except Exception as e:
+        return f"Failed to set temperature: {e}", 500
+    return redirect("/pool")
+
+
 MANAGE_ROW_TEMPLATE = """
       <tr class="{row_class}">
         <td class="guest-name">{first_name}</td>
@@ -1043,7 +1256,7 @@ MANAGE_TEMPLATE = """<!DOCTYPE html>
 </head>
 <body>
 <div class="wrap">
-  <a class="back-link" href="/">&larr; Back to welcome screen</a> · <a class="back-link" href="/cleaning">Cleaning checklist &rarr;</a>
+  <a class="back-link" href="/">&larr; Back to welcome screen</a> · <a class="back-link" href="/cleaning">Cleaning checklist</a> · <a class="back-link" href="/pool">Pool control &rarr;</a>
   <h1>Upcoming Arrivals</h1>
   <p class="subtitle">Last refreshed: {last_updated} · <a class="back-link" href="/refresh">Refresh now</a></p>
   {error_banner}
@@ -1184,7 +1397,7 @@ CLEANING_TEMPLATE = """<!DOCTYPE html>
 </head>
 <body>
 <div class="wrap">
-  <a class="back-link" href="/">&larr; Back to welcome screen</a> · <a class="back-link" href="/manage">Manage arrivals &rarr;</a>
+  <a class="back-link" href="/">&larr; Back to welcome screen</a> · <a class="back-link" href="/manage">Manage arrivals</a> · <a class="back-link" href="/pool">Pool control &rarr;</a>
   <h1>Cleaning Checklist</h1>
   <p class="subtitle">Last refreshed: {last_updated} · <a class="back-link" href="/refresh">Refresh now</a></p>
   {error_banner}
@@ -1192,6 +1405,151 @@ CLEANING_TEMPLATE = """<!DOCTYPE html>
   {cards}
 
   <p class="footer-note">Checklists are per booking and reset automatically once a booking is no longer upcoming. Checking a box saves immediately — no need to submit anything. This page has no login — don't share the URL publicly.</p>
+</div>
+</body>
+</html>
+"""
+
+
+POOL_SENSOR_CARD_TEMPLATE = """
+    <div class="sensor-card">
+      <div class="sensor-label">{label}</div>
+      <div class="sensor-value">{value}°</div>
+    </div>
+"""
+
+POOL_SETPOINT_CARD_TEMPLATE = """
+  <div class="setpoint-card">
+    <div class="setpoint-header">
+      <div class="setpoint-label">{label}</div>
+      <span class="status-badge {status_class}">{status_label}</span>
+    </div>
+    <form method="POST" action="/pool/set_temperature" class="setpoint-form">
+      <input type="hidden" name="device_key" value="{key}">
+      <input type="number" name="temperature" value="{value}" class="temp-input">
+      <button type="submit" class="temp-set-btn">Set</button>
+    </form>
+  </div>
+"""
+
+POOL_EQUIPMENT_CARD_TEMPLATE = """
+  <div class="equipment-card {card_class}">
+    <div class="equipment-info">
+      <div class="equipment-label">{label}</div>
+      <span class="status-badge {status_class}">{status_label}</span>
+    </div>
+    <form method="POST" action="/pool/toggle">
+      <input type="hidden" name="device_key" value="{key}">
+      <button type="submit" class="toggle-btn">{button_label}</button>
+    </form>
+  </div>
+"""
+
+POOL_TEMPLATE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Pool Control — {system_name}</title>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{{
+    --creek: #1F3F3D; --creek-deep: #142B29; --limestone: #EFEAD9;
+    --sage: #7C8B65; --clay: #C1652F; --bark: #2A2018;
+  }}
+  *{{box-sizing:border-box;}}
+  body{{ margin:0; background: var(--limestone); color: var(--bark);
+    font-family:'Work Sans', sans-serif; padding: 40px 32px 60px; }}
+  .wrap{{ max-width: 900px; margin:0 auto; }}
+  h1{{ font-family:'Fraunces', serif; font-weight:500; font-size: 34px;
+    color: var(--creek-deep); margin: 12px 0 6px; display:inline-block; }}
+  .subtitle{{ color:#77705C; margin: 0 0 28px; font-size:14px; }}
+  .back-link{{ font-size: 13px; color: var(--creek); text-decoration:none; }}
+  .back-link:hover{{ text-decoration:underline; }}
+  .online-badge{{
+    display:inline-block; font-size: 12px; font-weight:600; padding: 3px 10px;
+    border-radius: 100px; margin-left: 12px; vertical-align: middle;
+  }}
+  .online-yes{{ background: var(--sage); color:#fff; }}
+  .online-no{{ background:#C1652F; color:#fff; }}
+  .error-banner{{
+    background:#FBEAE0; border:1px solid #E8B99B; color:#8A3D14;
+    padding:12px 16px; border-radius:10px; margin-bottom:20px; font-size:14px;
+  }}
+  .empty-state{{ text-align:center; color:#9A9276; padding: 20px; }}
+  .section-title{{
+    font-family:'Fraunces', serif; font-weight:500; font-size: 20px;
+    color: var(--creek-deep); margin: 32px 0 14px;
+  }}
+  .sensor-grid{{ display:flex; gap:16px; flex-wrap:wrap; }}
+  .sensor-card{{
+    background:#fff; border:1px solid #E2DBC5; border-radius:14px;
+    padding: 18px 24px; min-width: 130px; text-align:center;
+  }}
+  .sensor-label{{ font-size: 11px; text-transform:uppercase; letter-spacing:0.08em; color:#8A7F63; margin-bottom:6px; }}
+  .sensor-value{{ font-family:'Fraunces', serif; font-weight:500; font-size: 30px; color: var(--creek-deep); }}
+  .setpoint-grid{{ display:grid; grid-template-columns: 1fr 1fr; gap:16px; }}
+  .setpoint-card{{ background:#fff; border:1px solid #E2DBC5; border-radius:14px; padding: 18px 20px; }}
+  .setpoint-header{{ display:flex; justify-content:space-between; align-items:center; margin-bottom: 14px; }}
+  .setpoint-label{{ font-family:'Fraunces', serif; font-weight:500; font-size: 16px; color: var(--creek-deep); }}
+  .setpoint-form{{ display:flex; gap:10px; margin:0; }}
+  .temp-input{{
+    width: 80px; font-family:'Work Sans', sans-serif; font-size: 16px;
+    padding: 8px 10px; border-radius: 8px; border:1px solid #DCD4B8;
+  }}
+  .temp-set-btn{{
+    font-family:'Work Sans', sans-serif; font-size: 13px; font-weight:500;
+    padding: 8px 16px; border-radius: 100px; border:1px solid var(--creek);
+    background: var(--creek); color:#fff; cursor:pointer;
+  }}
+  .temp-set-btn:hover{{ background: var(--creek-deep); }}
+  .equipment-grid{{ display:grid; grid-template-columns: 1fr 1fr; gap:14px; }}
+  .equipment-card{{
+    background:#fff; border:1px solid #E2DBC5; border-radius:14px;
+    padding: 16px 18px; display:flex; justify-content:space-between; align-items:center; gap:12px;
+  }}
+  .equipment-card-on{{ border-color: var(--sage); background:#F7F9F2; }}
+  .equipment-label{{ font-size: 14px; font-weight:500; color: var(--bark); margin-bottom: 6px; }}
+  .status-badge{{
+    display:inline-block; font-size: 11px; font-weight:600; padding: 2px 9px;
+    border-radius: 100px;
+  }}
+  .status-on{{ background: var(--sage); color:#fff; }}
+  .status-off{{ background:#DCD4B8; color:#5C5443; }}
+  .toggle-btn{{
+    font-family:'Work Sans', sans-serif; font-size: 12px; font-weight:500;
+    padding: 7px 14px; border-radius: 100px; border:1px solid #DCD4B8;
+    background:#fff; color: var(--bark); cursor:pointer; white-space:nowrap;
+  }}
+  .toggle-btn:hover{{ border-color: var(--clay); color: var(--clay); }}
+  .footer-note{{ margin-top: 32px; font-size: 12px; color:#9A9276; }}
+  @media (max-width: 600px){{
+    .setpoint-grid, .equipment-grid{{ grid-template-columns: 1fr; }}
+  }}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a class="back-link" href="/">&larr; Back to welcome screen</a> · <a class="back-link" href="/manage">Manage arrivals</a> · <a class="back-link" href="/cleaning">Cleaning checklist</a>
+  <div><h1>{system_name}</h1>{online_badge}</div>
+  <p class="subtitle"><a class="back-link" href="/pool">Refresh now</a></p>
+  {error_banner}
+
+  <h2 class="section-title">Readings</h2>
+  <div class="sensor-grid">
+    {sensor_cards}
+  </div>
+
+  <h2 class="section-title">Temperature</h2>
+  <div class="setpoint-grid">
+    {setpoint_cards}
+  </div>
+
+  <h2 class="section-title">Equipment</h2>
+  <div class="equipment-grid">
+    {equipment_cards}
+  </div>
+
+  <p class="footer-note">Pool state is fetched live on every visit to this page — it isn't cached. This page has no login — don't share the URL publicly.</p>
 </div>
 </body>
 </html>
