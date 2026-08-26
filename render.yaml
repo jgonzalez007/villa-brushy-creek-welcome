@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: villa-brushy-creek-welcome
+    runtime: python
+    plan: starter          # $7/mo, always-on. Change to "free" to test at no cost.
+    buildCommand: pip install -r requirements.txt
+    # --workers 1 is intentional: this app refreshes OwnerRez itself on a
+    # background thread once an hour. Multiple gunicorn workers would each
+    # run their own copy of that thread, multiplying API calls unnecessarily.
+    startCommand: gunicorn app:app --workers 1 --threads 4 --timeout 60
+    envVars:
+      - key: OWNERREZ_USERNAME
+        sync: false        # set manually in Render dashboard, not stored in git
+      - key: OWNERREZ_TOKEN
+        sync: false        # set manually in Render dashboard, not stored in git
+      - key: WIFI_SSID
+        sync: false        # optional -- omit entirely to hide the Wi-Fi section
+      - key: WIFI_PASSWORD
+        sync: false        # optional -- required unless WIFI_AUTH=nopass
+      - key: WIFI_AUTH
+        value: WPA          # WPA (covers WPA2/WPA3), WEP, or nopass
+      - key: CLEANING_TASKS
+        sync: false        # optional -- comma-separated list overriding the default checklist
