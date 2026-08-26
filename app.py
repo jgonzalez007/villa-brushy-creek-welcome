@@ -789,10 +789,15 @@ _POOL_SKIP_KEYS = {"is_icl_present", "relay_count"}
 async def _pool_with_client(fn):
     try:
         from iaqualink import AqualinkClient
-    except ImportError:
+    except ImportError as e:
+        # Surface the REAL import error instead of a generic guess -- it
+        # could be a missing package, but it could also be a version
+        # mismatch (e.g. AqualinkClient not present in an older/different
+        # installed version) or a transitive dependency failing to import.
         raise RuntimeError(
-            "The 'iaqualink' package isn't installed. Add it to requirements.txt "
-            "(see render.yaml / README) and redeploy."
+            f"Couldn't import iaqualink: {type(e).__name__}: {e}. "
+            "Check the Render build log for the exact 'iaqualink' version "
+            "that was installed."
         )
     if not IAQUALINK_USERNAME or not IAQUALINK_PASSWORD:
         raise RuntimeError(
