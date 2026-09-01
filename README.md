@@ -71,6 +71,80 @@ git push
 
 Render auto-redeploys on every push to `main`.
 
+## Door codes
+
+`/doors` sends Kwikset keypad access codes to guests -- pick a lock,
+pick a month (current + next 5), and for each real guest arriving that
+month it shows their name, arrival/departure dates, and the last 4
+digits of their phone number (their default door code). Press "Send
+code" to create a code on the selected lock, valid only from their
+check-in time to their check-out time.
+
+### One-time setup: connecting Kwikset
+
+This app **does not implement Kwikset login itself** -- Cognito SRP
+plus a two-step phone-verification challenge is genuinely complex, and
+it's already solved correctly by `auth-setup.js` in the
+`kwikset-mcp-node` project. Run that once, on any machine:
+
+```bash
+cd kwikset-mcp-node
+node auth-setup.js
+```
+
+This writes `~/.kwikset-mcp/tokens.json`, which contains an `email`
+and a `refreshToken`. Copy both into Render's Environment tab:
+
+```
+KWIKSET_EMAIL=you@example.com
+KWIKSET_REFRESH_TOKEN=<the refreshToken value from tokens.json>
+```
+
+From then on, this app only ever does **token refresh** (simple,
+well-documented, no SRP) plus the REST calls -- both far lower-risk
+than login itself. If the refresh token is ever revoked or expires
+(e.g. you changed your Kwikset password), `/doors` will show a clear
+"couldn't refresh" error -- just re-run `auth-setup.js` and update
+`KWIKSET_REFRESH_TOKEN`.
+
+### How the code-sending actually works
+
+This talks to Kwikset's real, undocumented cloud API directly (not
+through any MCP tool -- those only work inside a Claude chat via a
+device bridge, not from a deployed server). The endpoint, headers, and
+binary payload format (TLV8 records with packed-BCD digits, not JSON)
+were reverse-engineered by decompiling the real Kwikset Android app;
+see `kwikset_codec.py` and `kwikset_client.py` for the byte-level
+detail and provenance. The encoding was verified three independent
+ways during development (an independent reference re-implementation,
+hand arithmetic, and a full round-trip decode of a real payload) before
+being wired into this app -- but the actual live HTTP calls to
+Kwikset's servers couldn't be tested from the sandbox this was built
+in. Treat your first real "Send code" as the actual test: **verify the
+code works at the keypad or shows up in the Kwikset app afterward.**
+
+### Known limitations
+
+- **"Sent" only means "this app sent it."** Kwikset's API has no way to
+  read codes back off the physical lock -- so if a code was added via
+  the Kwikset app or the keypad directly, this page has no way to know
+  about it, and won't show it as sent.
+- **Slot numbers are tracked locally**, starting from 1 per lock, with
+  no visibility into slots already used outside this app. If you've
+  added codes manually via the Kwikset app, check there first to avoid
+  a slot collision, since Kwikset's API doesn't expose a way to check
+  this automatically either.
+- **No edit.** To change a sent code, there's currently no "edit" --
+  you'd need to remove the old one and send a new one (removal isn't
+  wired into this page yet, only the /pool-style codec supports it at
+  the client level).
+- Guest phone numbers require a separate OwnerRez lookup per guest (not
+  included in the booking list) -- if a guest has no phone on file, the
+  "Send code" button is disabled for them.
+
+This page has no login — don't share the URL publicly, since it can
+create real door access codes.
+
 ## Pool control
 
 Visit `/pool` to see live pool/spa readings and control equipment —
@@ -108,6 +182,69 @@ anything looks off, share the error message and it's a fast fix.
 
 This page has no login — don't share the URL publicly, since it can
 control physical pool equipment.
+
+## Persistent storage (database)
+
+Pool schedules, cleaning checklist progress, and guest selection mode
+are saved to a small SQLite database so they survive deploys and
+restarts. Without a persistent disk attached, this still works, but
+the database file lives on the service's normal (ephemeral) filesystem
+and is wiped on every deploy -- effectively back to the old
+in-memory-only behavior.
+
+**To make it actually persist, attach a disk:**
+
+1. Render dashboard -> your service -> **Settings** tab -> **Disks** section
+2. Click **Add Disk**
+3. Name: anything (e.g. `villa-brushy-creek-data`)
+4. Mount path: `/var/data`
+5. Size: 1 GB is already overkill for this app's data (schedules and
+   checklists are a few KB at most) -- costs about $0.25/month
+6. Save. Render redeploys automatically once the disk is attached.
+
+Then set this environment variable (Environment tab) so the app
+actually writes into that disk instead of the default ephemeral path:
+```
+DB_PATH=/var/data/app.db
+```
+
+`render.yaml` already declares both the disk and `DB_PATH` for
+Blueprint-based deploys, but since this service was originally created
+as a manual Web Service (not via Blueprint), Render won't auto-apply
+either one -- you likely need to add both by hand as described above,
+the same situation we ran into earlier with `PYTHON_VERSION`.
+
+**Verifying it's working:** after attaching the disk and setting
+`DB_PATH`, add a pool schedule, then trigger a redeploy (any small
+`git push`, or Manual Deploy in the dashboard) and check `/pool` again
+-- the schedule should still be there. If it's gone after a redeploy,
+the disk isn't actually mounted where the app is writing; double-check
+the mount path and `DB_PATH` match exactly.
+
+## Pool schedules
+
+At the bottom of `/pool`, set up recurring on/off schedules per piece
+of equipment -- e.g. "turn the pool pump on at 8:00 AM, off at 6:00 PM,
+every day" or "path lights on 7pm-11pm, weekends only." A background
+thread checks every 30 seconds and fires any due schedule, whether or
+not anyone has `/pool` open at the time -- that's the whole point of a
+schedule.
+
+Notes:
+- Times are in the property's local timezone, set via `POOL_TIMEZONE`
+  (defaults to `America/Chicago` for Cedar Park, TX). Change this if
+  you ever host a property in a different timezone.
+- Each schedule fires at most once per calendar day per trigger (on and
+  off separately) -- it won't repeatedly toggle a device if the check
+  loop happens to run more than once during the matching minute.
+- Turning "on" a device that's already on (or "off" one that's already
+  off) is a harmless no-op -- schedules use direct on/off commands, not
+  toggle, so they're safe to fire even if someone already manually
+  changed the equipment's state.
+- **Schedules are saved to the database** (see "Persistent storage"
+  above) -- they survive deploys and restarts as long as a disk is
+  attached and `DB_PATH` points into it. Without that setup, they still
+  work but reset on every deploy, same as the rest of this app used to.
 
 ## Cleaning checklist
 

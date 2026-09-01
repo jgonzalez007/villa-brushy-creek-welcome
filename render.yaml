@@ -27,3 +27,15 @@ services:
         sync: false        # optional -- omit to leave /pool showing "not configured"
       - key: IAQUALINK_PASSWORD
         sync: false        # optional -- your iAqualink app login password
+      - key: POOL_TIMEZONE
+        value: America/Chicago   # used for pool schedule on/off times (Cedar Park, TX)
+      - key: DB_PATH
+        value: /var/data/app.db  # must live under the disk's mount path below to persist
+      - key: KWIKSET_EMAIL
+        sync: false        # optional -- omit to leave /doors showing "not connected"
+      - key: KWIKSET_REFRESH_TOKEN
+        sync: false        # optional -- from running auth-setup.js once, see README
+    disks:
+      - name: villa-brushy-creek-data
+        mountPath: /var/data
+        sizeGB: 1               # tiny data (schedules/checklists) -- 1GB is already overkill
