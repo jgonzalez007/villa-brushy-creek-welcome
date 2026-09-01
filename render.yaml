@@ -35,6 +35,8 @@ services:
         sync: false        # optional -- omit to leave /doors showing "not connected"
       - key: KWIKSET_REFRESH_TOKEN
         sync: false        # optional -- from running auth-setup.js once, see README
+      - key: KWIKSET_ADMIN_TOKEN
+        sync: false        # optional -- set a long random string to enable /admin/kwikset-reauth
     disks:
       - name: villa-brushy-creek-data
         mountPath: /var/data

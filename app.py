@@ -51,6 +51,7 @@ import asyncio
 import threading
 import time
 import datetime
+import hmac
 from zoneinfo import ZoneInfo
 import requests
 from flask import Flask, Response, request, redirect
@@ -131,6 +132,16 @@ POOL_SCHEDULE_CHECK_SECONDS = 30  # how often the scheduler loop checks for due 
 # point on (token refresh, REST calls) is handled by this app.
 KWIKSET_EMAIL = os.environ.get("KWIKSET_EMAIL")
 KWIKSET_REFRESH_TOKEN = os.environ.get("KWIKSET_REFRESH_TOKEN")
+
+# Lets you push a fresh Kwikset refresh token into the database from a
+# browser (via /admin/kwikset-reauth) instead of needing Render Shell
+# access every time Cognito rejects the saved one. This route is a no-op
+# (503) unless this is set, and requires it as a token= query/form value
+# on every request -- set it once in the Render dashboard to a long
+# random string (e.g. `python3 -c "import secrets; print(secrets.token_urlsafe(32))"`)
+# and don't share it, since it can push whatever Kwikset session it's
+# given straight into the door-code system.
+KWIKSET_ADMIN_TOKEN = os.environ.get("KWIKSET_ADMIN_TOKEN")
 
 # In-memory cache of everything the app needs to serve "/", "/manage",
 # and "/cleaning". RLock (not Lock) because route handlers call
@@ -1519,6 +1530,64 @@ def manual_refresh():
     if err:
         return f"Refresh attempted but failed: {err}", 500
     return "Refreshed. <a href='/'>View welcome screen</a> · <a href='/manage'>Manage</a>"
+
+
+_KWIKSET_REAUTH_TEMPLATE = """<!doctype html>
+<title>Reconnect Kwikset</title>
+<body style="font-family: sans-serif; max-width: 480px; margin: 40px auto; padding: 0 16px;">
+<h2>Reconnect Kwikset</h2>
+<p>Get a fresh email + refresh token by running <code>node auth-setup.js</code>
+from the kwikset-mcp-node project on any machine, then paste them below.
+This is verified against Kwikset's own Cognito login before anything is
+saved, so a bad paste can't break the currently-working session.</p>
+{message}
+<form method="post">
+  <input type="hidden" name="token" value="{token}">
+  <p><label>Email<br>
+    <input name="email" value="{email}" style="width:100%; box-sizing: border-box;">
+  </label></p>
+  <p><label>Refresh token<br>
+    <textarea name="refresh_token" rows="6" style="width:100%; box-sizing: border-box;"></textarea>
+  </label></p>
+  <p><button type="submit">Save &amp; verify</button></p>
+</form>
+</body>
+"""
+
+
+@app.route("/admin/kwikset-reauth", methods=["GET", "POST"])
+def kwikset_reauth():
+    # Lets you fix an expired/revoked Kwikset session from a browser --
+    # see the KWIKSET_ADMIN_TOKEN comment near the top of this file for
+    # why this is gated behind a separate secret rather than left open
+    # like the rest of this app's URLs.
+    if not KWIKSET_ADMIN_TOKEN:
+        return "KWIKSET_ADMIN_TOKEN is not set on this deploy -- this route is disabled until it is.", 503
+
+    supplied_token = request.values.get("token", "")
+    if not hmac.compare_digest(supplied_token, KWIKSET_ADMIN_TOKEN):
+        return "Forbidden -- missing or incorrect token.", 403
+
+    message = ""
+    if request.method == "POST":
+        email = request.form.get("email", "").strip()
+        refresh_token = request.form.get("refresh_token", "").strip()
+        if not email or not refresh_token:
+            message = "<p style='color:#b00'>Both fields are required.</p>"
+        else:
+            try:
+                fresh = kwikset_client.refresh_cognito_tokens(email, refresh_token)
+            except Exception as e:
+                message = f"<p style='color:#b00'>Kwikset rejected this token -- nothing was saved. {e}</p>"
+            else:
+                db_save_kwikset_auth(fresh["email"], fresh["refresh_token"])
+                message = "<p style='color:#080'>Saved and verified against Kwikset -- reconnected.</p>"
+
+    return _KWIKSET_REAUTH_TEMPLATE.format(
+        message=message,
+        token=supplied_token,
+        email=KWIKSET_EMAIL or "",
+    )
 
 
 @app.route("/manage")

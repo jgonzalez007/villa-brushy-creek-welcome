@@ -102,10 +102,37 @@ KWIKSET_REFRESH_TOKEN=<the refreshToken value from tokens.json>
 
 From then on, this app only ever does **token refresh** (simple,
 well-documented, no SRP) plus the REST calls -- both far lower-risk
-than login itself. If the refresh token is ever revoked or expires
-(e.g. you changed your Kwikset password), `/doors` will show a clear
-"couldn't refresh" error -- just re-run `auth-setup.js` and update
-`KWIKSET_REFRESH_TOKEN`.
+than login itself. On every refresh it saves the (possibly rotated)
+token into the `kwikset_auth` table on the attached disk, and reads
+from there from then on -- **not** from the env vars above.
+
+**`KWIKSET_EMAIL`/`KWIKSET_REFRESH_TOKEN` only matter the very first
+time this app starts up** (they seed that database row if it's empty).
+Once a row exists, changing those env vars later does nothing -- Render
+won't even restart the app just because you edited them, and the app
+wouldn't re-read them on its own if it did.
+
+### Re-authenticating later
+
+If the refresh token is ever revoked or expires (e.g. you changed your
+Kwikset password, or it just aged out), `/doors` will show a "couldn't
+be refreshed" error. Fix it with `/admin/kwikset-reauth` instead of
+touching the env vars:
+
+1. Set `KWIKSET_ADMIN_TOKEN` in Render's Environment tab once, to a
+   long random string (e.g. `python3 -c "import secrets; print(secrets.token_urlsafe(32))"`).
+   Keep it secret -- unlike every other page here, this one can push a
+   working Kwikset session into the app.
+2. Re-run `node auth-setup.js` from `kwikset-mcp-node` on any machine
+   to get a fresh `email` + `refreshToken`.
+3. Visit `https://<your-app>.onrender.com/admin/kwikset-reauth?token=<KWIKSET_ADMIN_TOKEN>`,
+   paste both values in, and submit. It's verified against Kwikset's
+   own Cognito login before anything is saved, so a bad paste can't
+   break a still-working session.
+
+(If you'd rather not use that route, the row can also be updated
+directly via Render's Shell: `sqlite3 /var/data/app.db "UPDATE
+kwikset_auth SET email='...', refresh_token='...' WHERE id=1;"`.)
 
 ### How the code-sending actually works
 
