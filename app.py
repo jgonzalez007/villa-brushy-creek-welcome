@@ -381,6 +381,22 @@ def db_find_access_code_for_booking(device_id, booking_key):
     ).fetchone()
 
 
+def db_list_all_access_codes():
+    db = get_db()
+    return db.execute(
+        "SELECT * FROM kwikset_access_codes ORDER BY created_at DESC"
+    ).fetchall()
+
+
+def db_delete_access_code_record(device_id, slot):
+    db = get_db()
+    db.execute(
+        "DELETE FROM kwikset_access_codes WHERE device_id = ? AND slot = ?",
+        (device_id, slot),
+    )
+    db.commit()
+
+
 def _db_safe(fn, *args, **kwargs):
     """Wraps a db_* write call so a database hiccup degrades gracefully
     (in-memory state still works, matching this app's existing philosophy
@@ -1512,6 +1528,44 @@ def send_door_code_for_guest(device_id, guest, check_in_time=None, check_out_tim
     return result
 
 
+def _is_schedule_expired(schedule):
+    """schedule is the already-parsed dict (from json.loads on the stored
+    schedule_json), not the raw string. Returns False (treated as "still
+    active"/"unknown") for anything that isn't a date_range schedule with
+    a parseable end time -- a code we can't confirm has expired is safer
+    to keep showing as active than to hide."""
+    if not schedule or schedule.get("type") != "date_range":
+        return False
+    end = schedule.get("end")
+    if not end:
+        return False
+    try:
+        end_dt = datetime.datetime(
+            end["year"], end["month"], end["day"], end["hour"], end["minute"],
+            tzinfo=ZoneInfo(POOL_TIMEZONE),
+        )
+    except (KeyError, ValueError, TypeError):
+        return False
+    return datetime.datetime.now(ZoneInfo(POOL_TIMEZONE)) > end_dt
+
+
+def _format_schedule_window(schedule):
+    if not schedule or schedule.get("type") != "date_range":
+        return "No expiration set"
+    start, end = schedule.get("start"), schedule.get("end")
+    if not start or not end:
+        return "—"
+    try:
+        start_d = datetime.date(start["year"], start["month"], start["day"])
+        end_d = datetime.date(end["year"], end["month"], end["day"])
+        start_t = f"{start['hour']:02d}:{start['minute']:02d}"
+        end_t = f"{end['hour']:02d}:{end['minute']:02d}"
+        return (f"{format_date(start_d)} {format_time_12h(start_t)} "
+                f"&rarr; {format_date(end_d)} {format_time_12h(end_t)}")
+    except (KeyError, ValueError, TypeError):
+        return "—"
+
+
 # ---------------------------------------------------------------------------
 # 7. WEB SERVER
 # ---------------------------------------------------------------------------
@@ -2051,6 +2105,35 @@ def doors():
             ))
         guest_rows = "".join(rows)
 
+    # All-codes audit section, independent of the month/lock filters above --
+    # this is meant to show everything this app has ever sent, across all
+    # locks, so a stale/expired code isn't hidden just because you're
+    # looking at a different month right now.
+    lock_name_by_id = {lk["device_id"]: f'{lk["name"]} ({lk["home"]})' for lk in locks}
+    all_codes = db_list_all_access_codes()
+    if not all_codes:
+        all_codes_rows = '<p class="empty-state">No door codes have been sent yet.</p>'
+    else:
+        code_rows = []
+        for row in all_codes:
+            try:
+                schedule = json.loads(row["schedule_json"]) if row["schedule_json"] else None
+            except (json.JSONDecodeError, TypeError):
+                schedule = None
+            expired = _is_schedule_expired(schedule)
+            code_rows.append(ALL_CODES_ROW_TEMPLATE.format(
+                lock_label=lock_name_by_id.get(row["device_id"], row["device_id"]),
+                guest_name=row["guest_name"] or "—",
+                code=row["code"] or "—",
+                slot=row["slot"],
+                window_str=_format_schedule_window(schedule),
+                expired_label="Expired" if expired else "Active",
+                expired_class="status-off" if expired else "status-on",
+                row_class="expired-row" if expired else "",
+                device_id=row["device_id"],
+            ))
+        all_codes_rows = "".join(code_rows)
+
     html = DOORS_TEMPLATE.format(
         error_banner=f'<div class="error-banner">{error}</div>' if error else "",
         lock_options=lock_options or '<option value="">No locks found</option>',
@@ -2058,6 +2141,7 @@ def doors():
         default_checkin_options=_time_options_html(default_checkin),
         default_checkout_options=_time_options_html(default_checkout),
         guest_rows=guest_rows,
+        all_codes_rows=all_codes_rows,
         selected_device_id=selected_device_id or "",
         selected_month_value=f"{year}-{month:02d}",
         selected_year=year,
@@ -2093,6 +2177,30 @@ def doors_send():
         return f"Failed to send door code: {e}", 500
 
     return redirect(f"/doors?device_id={device_id}&year={year}&month={month}")
+
+
+@app.route("/doors/remove", methods=["POST"])
+def doors_remove():
+    device_id = request.form.get("device_id")
+    slot = request.form.get("slot")
+    if not device_id or not slot:
+        return "Missing device_id or slot", 400
+    try:
+        slot = int(slot)
+    except ValueError:
+        return "Invalid slot", 400
+
+    try:
+        client = get_kwikset_client()
+        client.remove_access_code(device_id, slot)
+    except Exception as e:
+        # Deliberately do NOT delete our own tracking record if the real
+        # removal failed -- our record should only stop reflecting reality
+        # once we've actually confirmed the lock-side removal succeeded.
+        return f"Failed to remove door code: {e}", 500
+
+    _db_safe(db_delete_access_code_record, device_id, slot)
+    return redirect("/doors#all-codes")
 
 
 MANAGE_ROW_TEMPLATE = """
@@ -2600,6 +2708,24 @@ DOORS_ROW_TEMPLATE = """
       </tr>
 """
 
+ALL_CODES_ROW_TEMPLATE = """
+      <tr class="{row_class}">
+        <td>{lock_label}</td>
+        <td class="guest-name">{guest_name}</td>
+        <td>{code}</td>
+        <td>{slot}</td>
+        <td>{window_str}</td>
+        <td><span class="status-badge {expired_class}">{expired_label}</span></td>
+        <td>
+          <form method="POST" action="/doors/remove" onsubmit="return confirm('Remove this door code?');">
+            <input type="hidden" name="device_id" value="{device_id}">
+            <input type="hidden" name="slot" value="{slot}">
+            <button type="submit" class="delete-btn">Remove</button>
+          </form>
+        </td>
+      </tr>
+"""
+
 DOORS_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -2662,6 +2788,17 @@ DOORS_TEMPLATE = """<!DOCTYPE html>
   .select-btn[disabled]{{
     border-color:#DCD4B8; color:#9A9276; cursor:default; background:#F3F0DD;
   }}
+  .delete-btn{{
+    font-family:'Work Sans', sans-serif; font-size: 12px; color:#8A7F63;
+    background:none; border:1px solid #DCD4B8; border-radius:100px;
+    padding: 6px 14px; cursor:pointer;
+  }}
+  .delete-btn:hover{{ border-color: var(--clay); color: var(--clay); }}
+  .expired-row{{ opacity: 0.6; }}
+  .section-title{{
+    font-family:'Fraunces', serif; font-weight:500; font-size: 20px;
+    color: var(--creek-deep); margin: 36px 0 14px;
+  }}
   .footer-note{{ margin-top: 24px; font-size: 12px; color:#9A9276; }}
 </style>
 </head>
@@ -2706,7 +2843,19 @@ DOORS_TEMPLATE = """<!DOCTYPE html>
     </tbody>
   </table>
 
-  <p class="footer-note">"Sent" only reflects codes this app itself has created -- Kwikset's API has no way to read codes back off the physical lock, so this can't detect codes added via the Kwikset app or keypad. Each guest's access window defaults to the setting above but can be changed per guest before sending. This page has no login — don't share the URL publicly, since it can create real door access codes.</p>
+  <h2 class="section-title" id="all-codes">All Door Codes</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Lock</th><th>Guest</th><th>Code</th><th>Slot</th><th>Valid window</th><th>Status</th><th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {all_codes_rows}
+    </tbody>
+  </table>
+
+  <p class="footer-note">"Sent" only reflects codes this app itself has created -- Kwikset's API has no way to read codes back off the physical lock, so this can't detect codes added via the Kwikset app or keypad. Each guest's access window defaults to the setting above but can be changed per guest before sending. "Expired" is based on the code's own valid-until time, not a live check against the lock -- Kwikset's API can't confirm whether an expired code has actually stopped working, only that its scheduled window has passed. This page has no login — don't share the URL publicly, since it can create real door access codes.</p>
 </div>
 </body>
 </html>

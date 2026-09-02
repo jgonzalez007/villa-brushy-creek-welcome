@@ -93,6 +93,15 @@ changes how it labels these, this detection would need updating to
 match. A failed lookup for one guest shows "Unknown" rather than
 breaking the row or the page.
 
+### All Door Codes
+
+At the bottom of the page, a second table lists every code this app
+has ever sent, across all locks -- guest name, code, slot, the exact
+valid window, whether it's expired, and a Remove button. This is
+independent of the month/lock filters above, so a stale code from
+three months ago still shows up here even if you're currently looking
+at a different month.
+
 ### One-time setup: connecting Kwikset
 
 This app **does not implement Kwikset login itself** -- Cognito SRP
@@ -149,10 +158,18 @@ code works at the keypad or shows up in the Kwikset app afterward.**
   already used outside this app. If you've added 11+ codes manually via
   the Kwikset app too, check there first to avoid a collision, since
   Kwikset's API doesn't expose a way to check this automatically either.
-- **No edit.** To change a sent code, there's currently no "edit" --
-  you'd need to remove the old one and send a new one (removal isn't
-  wired into this page yet, only the /pool-style codec supports it at
-  the client level).
+- **No edit.** To change a sent code, remove it (via the "All Door
+  Codes" table at the bottom of the page) and send a new one -- there's
+  no in-place edit.
+- **"Expired" is a schedule check, not a live lock query.** It's based
+  on whether the code's own valid-until time has passed, not a live
+  check against the physical lock -- Kwikset's API can't confirm a code
+  has actually stopped working, only that its scheduled window has.
+- **Removing a code that failed to remove on the lock side stays
+  listed.** If the Kwikset API call fails when you click Remove, this
+  app deliberately keeps its own record rather than losing track of a
+  code that might still be active -- you'll see the real error and can
+  retry.
 - Guest phone numbers require a separate OwnerRez lookup per guest (not
   included in the booking list) -- if a guest has no phone on file, the
   "Send code" button is disabled for them.
