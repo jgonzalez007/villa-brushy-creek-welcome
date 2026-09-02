@@ -75,10 +75,23 @@ Render auto-redeploys on every push to `main`.
 
 `/doors` sends Kwikset keypad access codes to guests -- pick a lock,
 pick a month (current + next 5), and for each real guest arriving that
-month it shows their name, arrival/departure dates, and the last 4
-digits of their phone number (their default door code). Press "Send
-code" to create a code on the selected lock, valid only from their
-check-in time to their check-out time.
+month it shows their name, arrival/departure dates, last 4 digits of
+their phone number (their default door code), and their security
+deposit status. Press "Send code" to create a code on the selected
+lock, valid only from their check-in time to their check-out time.
+
+### Deposit status
+
+Shows "Received ($amount)" or "Not received" per guest, pulled from
+OwnerRez's payment records for that booking. OwnerRez has no distinct
+payment type for a security deposit -- confirmed against real account
+data, deposit payments come back with the same `type` field as regular
+payments (`credit_card`), differing only in their description text. So
+this detects a deposit by checking whether any payment's description
+contains "security deposit" (case-insensitive). If OwnerRez ever
+changes how it labels these, this detection would need updating to
+match. A failed lookup for one guest shows "Unknown" rather than
+breaking the row or the page.
 
 ### One-time setup: connecting Kwikset
 
@@ -102,37 +115,10 @@ KWIKSET_REFRESH_TOKEN=<the refreshToken value from tokens.json>
 
 From then on, this app only ever does **token refresh** (simple,
 well-documented, no SRP) plus the REST calls -- both far lower-risk
-than login itself. On every refresh it saves the (possibly rotated)
-token into the `kwikset_auth` table on the attached disk, and reads
-from there from then on -- **not** from the env vars above.
-
-**`KWIKSET_EMAIL`/`KWIKSET_REFRESH_TOKEN` only matter the very first
-time this app starts up** (they seed that database row if it's empty).
-Once a row exists, changing those env vars later does nothing -- Render
-won't even restart the app just because you edited them, and the app
-wouldn't re-read them on its own if it did.
-
-### Re-authenticating later
-
-If the refresh token is ever revoked or expires (e.g. you changed your
-Kwikset password, or it just aged out), `/doors` will show a "couldn't
-be refreshed" error. Fix it with `/admin/kwikset-reauth` instead of
-touching the env vars:
-
-1. Set `KWIKSET_ADMIN_TOKEN` in Render's Environment tab once, to a
-   long random string (e.g. `python3 -c "import secrets; print(secrets.token_urlsafe(32))"`).
-   Keep it secret -- unlike every other page here, this one can push a
-   working Kwikset session into the app.
-2. Re-run `node auth-setup.js` from `kwikset-mcp-node` on any machine
-   to get a fresh `email` + `refreshToken`.
-3. Visit `https://<your-app>.onrender.com/admin/kwikset-reauth?token=<KWIKSET_ADMIN_TOKEN>`,
-   paste both values in, and submit. It's verified against Kwikset's
-   own Cognito login before anything is saved, so a bad paste can't
-   break a still-working session.
-
-(If you'd rather not use that route, the row can also be updated
-directly via Render's Shell: `sqlite3 /var/data/app.db "UPDATE
-kwikset_auth SET email='...', refresh_token='...' WHERE id=1;"`.)
+than login itself. If the refresh token is ever revoked or expires
+(e.g. you changed your Kwikset password), `/doors` will show a clear
+"couldn't refresh" error -- just re-run `auth-setup.js` and update
+`KWIKSET_REFRESH_TOKEN`.
 
 ### How the code-sending actually works
 
@@ -156,11 +142,13 @@ code works at the keypad or shows up in the Kwikset app afterward.**
   read codes back off the physical lock -- so if a code was added via
   the Kwikset app or the keypad directly, this page has no way to know
   about it, and won't show it as sent.
-- **Slot numbers are tracked locally**, starting from 1 per lock, with
-  no visibility into slots already used outside this app. If you've
-  added codes manually via the Kwikset app, check there first to avoid
-  a slot collision, since Kwikset's API doesn't expose a way to check
-  this automatically either.
+- **Slot numbers are tracked locally**, starting from slot 11 per lock
+  (set via `KWIKSET_START_SLOT`, deliberately leaving 1-10 free since
+  those are the slots most likely to already be occupied by codes set
+  manually through the Kwikset app), with no visibility into slots
+  already used outside this app. If you've added 11+ codes manually via
+  the Kwikset app too, check there first to avoid a collision, since
+  Kwikset's API doesn't expose a way to check this automatically either.
 - **No edit.** To change a sent code, there's currently no "edit" --
   you'd need to remove the old one and send a new one (removal isn't
   wired into this page yet, only the /pool-style codec supports it at

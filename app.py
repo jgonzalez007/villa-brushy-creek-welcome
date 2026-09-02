@@ -131,6 +131,11 @@ POOL_SCHEDULE_CHECK_SECONDS = 30  # how often the scheduler loop checks for due 
 # point on (token refresh, REST calls) is handled by this app.
 KWIKSET_EMAIL = os.environ.get("KWIKSET_EMAIL")
 KWIKSET_REFRESH_TOKEN = os.environ.get("KWIKSET_REFRESH_TOKEN")
+# Slots below this are left alone -- low slot numbers are the ones most
+# likely to already be occupied by codes set manually through the
+# Kwikset app or keypad (which this app can't see -- see the /doors
+# README section on why "sent" tracking is local-only).
+KWIKSET_START_SLOT = int(os.environ.get("KWIKSET_START_SLOT", "11"))
 
 # In-memory cache of everything the app needs to serve "/", "/manage",
 # and "/cleaning". RLock (not Lock) because route handlers call
@@ -358,10 +363,12 @@ def db_record_access_code(device_id, slot, booking_key, guest_name, code, schedu
 
 
 def db_next_access_code_slot(device_id):
+    """Returns the next free slot for this device, starting from
+    KWIKSET_START_SLOT (not 1) -- see its definition for why."""
     db = get_db()
     row = db.execute(
-        "SELECT COALESCE(MAX(slot), 0) + 1 AS next_slot FROM kwikset_access_codes WHERE device_id = ?",
-        (device_id,),
+        "SELECT COALESCE(MAX(slot), ?) + 1 AS next_slot FROM kwikset_access_codes WHERE device_id = ?",
+        (KWIKSET_START_SLOT - 1, device_id),
     ).fetchone()
     return row["next_slot"]
 
@@ -406,6 +413,7 @@ def _booking_to_guest_dict(b):
     property_name = b.get("property", {}).get("name", PROPERTY_DISPLAY_NAME)
     return {
         "booking_key": _booking_key(b),
+        "booking_id": b.get("id"),
         "first_name": guest_first_name,
         "last_name": guest_last_name,
         "guest_id": guest_id,
@@ -556,6 +564,46 @@ def phone_last4(phone_number):
         return None
     digits = "".join(c for c in phone_number if c.isdigit())
     return digits[-4:] if len(digits) >= 4 else None
+
+
+_DEPOSIT_DESCRIPTION_MARKER = "security deposit"
+
+
+def fetch_deposit_status(booking_id):
+    """Checks whether a security deposit payment exists for this booking.
+    OwnerRez has no distinct payment `type` for this (confirmed against
+    real account data -- deposit payments come back as type="credit_card",
+    same as regular payments) -- the only reliable signal is "security
+    deposit" appearing in the payment description. Returns a dict with
+    the match, or None if the lookup itself failed (best-effort, like
+    the phone lookup -- one guest's failure shouldn't break the page)."""
+    if not OWNERREZ_USERNAME or not OWNERREZ_TOKEN:
+        return None
+    headers = {
+        "User-Agent": "Villa Brushy Creek Welcome Screen/1.0",
+        "Accept": "application/json",
+    }
+    try:
+        resp = requests.get(
+            f"{API_BASE}/payments",
+            params={"booking_id": booking_id},
+            auth=(OWNERREZ_USERNAME, OWNERREZ_TOKEN),
+            headers=headers,
+            timeout=15,
+        )
+        resp.raise_for_status()
+        payload = resp.json()
+    except Exception as e:
+        print(f"[{datetime.datetime.now()}] Deposit status lookup failed for "
+              f"booking_id={booking_id}: {e}", file=sys.stderr)
+        return None
+
+    payments = payload.get("items") or payload.get("payments") or []
+    for p in payments:
+        description = (p.get("description") or "").lower()
+        if _DEPOSIT_DESCRIPTION_MARKER in description:
+            return {"received": True, "amount": p.get("amount"), "description": p.get("description")}
+    return {"received": False, "amount": None, "description": None}
 
 
 # ---------------------------------------------------------------------------
@@ -1972,6 +2020,16 @@ def doors():
                 status_label = "Not sent"
                 status_class = "status-off"
 
+            deposit = fetch_deposit_status(g["booking_id"]) if g.get("booking_id") else None
+            if deposit is None:
+                deposit_label, deposit_class = "Unknown", "status-off"
+            elif deposit["received"]:
+                amt = deposit.get("amount")
+                deposit_label = f"Received (${amt:.0f})" if amt else "Received"
+                deposit_class = "status-on"
+            else:
+                deposit_label, deposit_class = "Not received", "status-off"
+
             rows.append(DOORS_ROW_TEMPLATE.format(
                 first_name=g["first_name"],
                 last_name=g["last_name"],
@@ -1980,6 +2038,8 @@ def doors():
                 last4=last4,
                 status_label=status_label,
                 status_class=status_class,
+                deposit_label=deposit_label,
+                deposit_class=deposit_class,
                 booking_key=g["booking_key"],
                 selected_device_id_for_row=selected_device_id or "",
                 year_for_row=year,
@@ -2519,6 +2579,7 @@ DOORS_ROW_TEMPLATE = """
         <td>{arrival_str}</td>
         <td>{departure_str}</td>
         <td>{last4}</td>
+        <td><span class="status-badge {deposit_class}">{deposit_label}</span></td>
         <td><span class="status-badge {status_class}">{status_label}</span></td>
         <td>
           <form method="POST" action="/doors/send" class="row-send-form">
@@ -2637,7 +2698,7 @@ DOORS_TEMPLATE = """<!DOCTYPE html>
   <table>
     <thead>
       <tr>
-        <th>Guest</th><th>Arrival</th><th>Departure</th><th>Phone (last 4)</th><th>Status</th><th>Access window</th>
+        <th>Guest</th><th>Arrival</th><th>Departure</th><th>Phone (last 4)</th><th>Deposit</th><th>Status</th><th>Access window</th>
       </tr>
     </thead>
     <tbody>
