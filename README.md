@@ -259,11 +259,11 @@ code works at the keypad or shows up in the Kwikset app afterward.**
   read codes back off the physical lock -- so if a code was added via
   the Kwikset app or the keypad directly, this page has no way to know
   about it, and won't show it as sent.
-- **Slot numbers are tracked locally**, starting from slot 11 per lock
-  (set via `KWIKSET_START_SLOT`, deliberately leaving 1-10 free since
+- **Slot numbers are tracked locally**, starting from slot 50 per lock
+  (set via `KWIKSET_START_SLOT`, deliberately leaving 1-49 free since
   those are the slots most likely to already be occupied by codes set
   manually through the Kwikset app), with no visibility into slots
-  already used outside this app. If you've added 11+ codes manually via
+  already used outside this app. If you've added 50+ codes manually via
   the Kwikset app too, check there first to avoid a collision, since
   Kwikset's API doesn't expose a way to check this automatically either.
 - **No edit.** To change a sent code, remove it (via the "All Door

@@ -138,7 +138,7 @@ KWIKSET_REFRESH_TOKEN = os.environ.get("KWIKSET_REFRESH_TOKEN")
 # likely to already be occupied by codes set manually through the
 # Kwikset app or keypad (which this app can't see -- see the /doors
 # README section on why "sent" tracking is local-only).
-KWIKSET_START_SLOT = int(os.environ.get("KWIKSET_START_SLOT", "11"))
+KWIKSET_START_SLOT = int(os.environ.get("KWIKSET_START_SLOT", "50"))
 
 # Auth. SECRET_KEY signs the session cookie -- without setting this env
 # var, a random key is generated at every process start, which means
