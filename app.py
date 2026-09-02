@@ -51,7 +51,6 @@ import asyncio
 import threading
 import time
 import datetime
-import hmac
 from zoneinfo import ZoneInfo
 import requests
 from flask import Flask, Response, request, redirect
@@ -132,16 +131,6 @@ POOL_SCHEDULE_CHECK_SECONDS = 30  # how often the scheduler loop checks for due 
 # point on (token refresh, REST calls) is handled by this app.
 KWIKSET_EMAIL = os.environ.get("KWIKSET_EMAIL")
 KWIKSET_REFRESH_TOKEN = os.environ.get("KWIKSET_REFRESH_TOKEN")
-
-# Lets you push a fresh Kwikset refresh token into the database from a
-# browser (via /admin/kwikset-reauth) instead of needing Render Shell
-# access every time Cognito rejects the saved one. This route is a no-op
-# (503) unless this is set, and requires it as a token= query/form value
-# on every request -- set it once in the Render dashboard to a long
-# random string (e.g. `python3 -c "import secrets; print(secrets.token_urlsafe(32))"`)
-# and don't share it, since it can push whatever Kwikset session it's
-# given straight into the door-code system.
-KWIKSET_ADMIN_TOKEN = os.environ.get("KWIKSET_ADMIN_TOKEN")
 
 # In-memory cache of everything the app needs to serve "/", "/manage",
 # and "/cleaning". RLock (not Lock) because route handlers call
@@ -1424,12 +1413,16 @@ def get_kwikset_client():
     return kwikset_client.KwiksetClient(id_token=fresh["id_token"])
 
 
-def build_stay_schedule(guest):
-    """A date_range schedule matching the guest's actual stay -- the code
-    is only valid from check-in to check-out, not permanently."""
+def build_stay_schedule(guest, check_in_time=None, check_out_time=None):
+    """A date_range schedule matching the guest's stay. check_in_time/
+    check_out_time ("HH:MM" strings) override the guest's own OwnerRez
+    check-in/out times if given -- lets a host set a stricter/looser
+    code-validity window than the official check-in/out times."""
     arrival, departure = guest["arrival"], guest["departure"]
-    check_in_h, check_in_m = (int(x) for x in guest["check_in_time"].split(":"))
-    check_out_h, check_out_m = (int(x) for x in guest["check_out_time"].split(":"))
+    check_in_time = check_in_time or guest["check_in_time"]
+    check_out_time = check_out_time or guest["check_out_time"]
+    check_in_h, check_in_m = (int(x) for x in check_in_time.split(":"))
+    check_out_h, check_out_m = (int(x) for x in check_out_time.split(":"))
     return {
         "type": "date_range",
         "start": {
@@ -1443,11 +1436,12 @@ def build_stay_schedule(guest):
     }
 
 
-def send_door_code_for_guest(device_id, guest):
+def send_door_code_for_guest(device_id, guest, check_in_time=None, check_out_time=None):
     """Sends a code (last 4 of the guest's phone) valid for exactly their
-    stay. Returns the sent code dict. Raises on any failure -- callers
-    are expected to catch and show the real error, this is too
-    consequential an action to fail silently."""
+    stay (or the given check_in_time/check_out_time override). Returns
+    the sent code dict. Raises on any failure -- callers are expected to
+    catch and show the real error, this is too consequential an action
+    to fail silently."""
     phone = fetch_guest_phone(guest["guest_id"]) if guest.get("guest_id") else None
     code = phone_last4(phone)
     if not code:
@@ -1458,7 +1452,7 @@ def send_door_code_for_guest(device_id, guest):
 
     client = get_kwikset_client()
     slot = db_next_access_code_slot(device_id)
-    schedule = build_stay_schedule(guest)
+    schedule = build_stay_schedule(guest, check_in_time, check_out_time)
     guest_full_name = f"{guest['first_name']} {guest['last_name']}".strip()
 
     result = client.add_access_code(
@@ -1530,64 +1524,6 @@ def manual_refresh():
     if err:
         return f"Refresh attempted but failed: {err}", 500
     return "Refreshed. <a href='/'>View welcome screen</a> · <a href='/manage'>Manage</a>"
-
-
-_KWIKSET_REAUTH_TEMPLATE = """<!doctype html>
-<title>Reconnect Kwikset</title>
-<body style="font-family: sans-serif; max-width: 480px; margin: 40px auto; padding: 0 16px;">
-<h2>Reconnect Kwikset</h2>
-<p>Get a fresh email + refresh token by running <code>node auth-setup.js</code>
-from the kwikset-mcp-node project on any machine, then paste them below.
-This is verified against Kwikset's own Cognito login before anything is
-saved, so a bad paste can't break the currently-working session.</p>
-{message}
-<form method="post">
-  <input type="hidden" name="token" value="{token}">
-  <p><label>Email<br>
-    <input name="email" value="{email}" style="width:100%; box-sizing: border-box;">
-  </label></p>
-  <p><label>Refresh token<br>
-    <textarea name="refresh_token" rows="6" style="width:100%; box-sizing: border-box;"></textarea>
-  </label></p>
-  <p><button type="submit">Save &amp; verify</button></p>
-</form>
-</body>
-"""
-
-
-@app.route("/admin/kwikset-reauth", methods=["GET", "POST"])
-def kwikset_reauth():
-    # Lets you fix an expired/revoked Kwikset session from a browser --
-    # see the KWIKSET_ADMIN_TOKEN comment near the top of this file for
-    # why this is gated behind a separate secret rather than left open
-    # like the rest of this app's URLs.
-    if not KWIKSET_ADMIN_TOKEN:
-        return "KWIKSET_ADMIN_TOKEN is not set on this deploy -- this route is disabled until it is.", 503
-
-    supplied_token = request.values.get("token", "")
-    if not hmac.compare_digest(supplied_token, KWIKSET_ADMIN_TOKEN):
-        return "Forbidden -- missing or incorrect token.", 403
-
-    message = ""
-    if request.method == "POST":
-        email = request.form.get("email", "").strip()
-        refresh_token = request.form.get("refresh_token", "").strip()
-        if not email or not refresh_token:
-            message = "<p style='color:#b00'>Both fields are required.</p>"
-        else:
-            try:
-                fresh = kwikset_client.refresh_cognito_tokens(email, refresh_token)
-            except Exception as e:
-                message = f"<p style='color:#b00'>Kwikset rejected this token -- nothing was saved. {e}</p>"
-            else:
-                db_save_kwikset_auth(fresh["email"], fresh["refresh_token"])
-                message = "<p style='color:#080'>Saved and verified against Kwikset -- reconnected.</p>"
-
-    return _KWIKSET_REAUTH_TEMPLATE.format(
-        message=message,
-        token=supplied_token,
-        email=KWIKSET_EMAIL or "",
-    )
 
 
 @app.route("/manage")
@@ -1954,6 +1890,19 @@ def _month_options(selected_year, selected_month):
     return options
 
 
+_TIME_OPTION_VALUES = [f"{h:02d}:{m:02d}" for h in range(24) for m in (0, 30)]
+
+DEFAULT_DOOR_CHECK_IN = "16:00"
+DEFAULT_DOOR_CHECK_OUT = "11:00"
+
+
+def _time_options_html(selected_value):
+    return "".join(
+        f'<option value="{t}" {"selected" if t == selected_value else ""}>{format_time_12h(t)}</option>'
+        for t in _TIME_OPTION_VALUES
+    )
+
+
 @app.route("/doors")
 def doors():
     today = datetime.date.today()
@@ -1962,6 +1911,13 @@ def doors():
         month = int(request.args.get("month", today.month))
     except ValueError:
         year, month = today.year, today.month
+
+    default_checkin = request.args.get("default_checkin", DEFAULT_DOOR_CHECK_IN)
+    default_checkout = request.args.get("default_checkout", DEFAULT_DOOR_CHECK_OUT)
+    if default_checkin not in _TIME_OPTION_VALUES:
+        default_checkin = DEFAULT_DOOR_CHECK_IN
+    if default_checkout not in _TIME_OPTION_VALUES:
+        default_checkout = DEFAULT_DOOR_CHECK_OUT
 
     error = None
     locks = []
@@ -2028,6 +1984,8 @@ def doors():
                 selected_device_id_for_row=selected_device_id or "",
                 year_for_row=year,
                 month_for_row=month,
+                checkin_options=_time_options_html(default_checkin),
+                checkout_options=_time_options_html(default_checkout),
                 send_disabled="disabled" if (existing or not selected_device_id or last4 == "—") else "",
                 send_label="Already sent" if existing else "Send code",
             ))
@@ -2037,9 +1995,13 @@ def doors():
         error_banner=f'<div class="error-banner">{error}</div>' if error else "",
         lock_options=lock_options or '<option value="">No locks found</option>',
         month_options=month_options,
+        default_checkin_options=_time_options_html(default_checkin),
+        default_checkout_options=_time_options_html(default_checkout),
         guest_rows=guest_rows,
         selected_device_id=selected_device_id or "",
         selected_month_value=f"{year}-{month:02d}",
+        selected_year=year,
+        selected_month=month,
     )
     return _no_cache(Response(html, mimetype="text/html"))
 
@@ -2050,19 +2012,23 @@ def doors_send():
     booking_key = request.form.get("booking_key")
     year = request.form.get("year")
     month = request.form.get("month")
+    check_in_time = request.form.get("check_in_time")
+    check_out_time = request.form.get("check_out_time")
     if not device_id or not booking_key:
         return "Missing device_id or booking_key", 400
     try:
         year, month = int(year), int(month)
     except (TypeError, ValueError):
         return "Missing or invalid year/month", 400
+    if check_in_time not in _TIME_OPTION_VALUES or check_out_time not in _TIME_OPTION_VALUES:
+        return "Invalid check-in/check-out time", 400
 
     try:
         guests = fetch_bookings_for_month(year, month)
         guest = next((g for g in guests if g["booking_key"] == booking_key), None)
         if guest is None:
             return "Guest not found for that month -- try reloading the page", 404
-        send_door_code_for_guest(device_id, guest)
+        send_door_code_for_guest(device_id, guest, check_in_time, check_out_time)
     except Exception as e:
         return f"Failed to send door code: {e}", 500
 
@@ -2555,11 +2521,18 @@ DOORS_ROW_TEMPLATE = """
         <td>{last4}</td>
         <td><span class="status-badge {status_class}">{status_label}</span></td>
         <td>
-          <form method="POST" action="/doors/send">
+          <form method="POST" action="/doors/send" class="row-send-form">
             <input type="hidden" name="device_id" value="{selected_device_id_for_row}">
             <input type="hidden" name="booking_key" value="{booking_key}">
             <input type="hidden" name="year" value="{year_for_row}">
             <input type="hidden" name="month" value="{month_for_row}">
+            <select name="check_in_time" class="row-time-select" {send_disabled}>
+              {checkin_options}
+            </select>
+            <span class="time-arrow">&rarr;</span>
+            <select name="check_out_time" class="row-time-select" {send_disabled}>
+              {checkout_options}
+            </select>
             <button type="submit" class="select-btn" {send_disabled}>{send_label}</button>
           </form>
         </td>
@@ -2591,12 +2564,14 @@ DOORS_TEMPLATE = """<!DOCTYPE html>
     padding:12px 16px; border-radius:10px; margin-bottom:20px; font-size:14px;
   }}
   .empty-state{{ text-align:center; color:#9A9276; padding: 30px; }}
-  .controls{{ display:flex; gap:14px; margin: 20px 0 24px; flex-wrap:wrap; }}
-  .controls form{{ margin:0; }}
+  .controls{{ display:flex; gap:14px; margin: 20px 0 24px; flex-wrap:wrap; align-items:center; }}
+  .controls form{{ margin:0; display:flex; gap:14px; align-items:center; flex-wrap:wrap; }}
   .controls select{{
     font-family:'Work Sans', sans-serif; font-size: 14px;
     padding: 9px 12px; border-radius: 9px; border:1px solid #DCD4B8; background:#fff;
   }}
+  .controls-label{{ font-size: 12px; color:#8A7F63; margin-right: -6px; }}
+  .time-arrow{{ color:#9A9276; font-size: 13px; }}
   table{{ width:100%; border-collapse: collapse; background:#fff;
     border-radius: 14px; overflow:hidden; border:1px solid #E2DBC5; }}
   th{{
@@ -2612,6 +2587,11 @@ DOORS_TEMPLATE = """<!DOCTYPE html>
   }}
   .status-on{{ background: var(--sage); color:#fff; }}
   .status-off{{ background:#DCD4B8; color:#5C5443; }}
+  .row-send-form{{ display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin:0; }}
+  .row-time-select{{
+    font-family:'Work Sans', sans-serif; font-size: 12px;
+    padding: 6px 8px; border-radius: 7px; border:1px solid #DCD4B8; background:#fff;
+  }}
   .select-btn{{
     font-family:'Work Sans', sans-serif; font-size: 13px; font-weight:500;
     padding: 8px 14px; border-radius: 100px; border:1px solid var(--clay);
@@ -2632,22 +2612,32 @@ DOORS_TEMPLATE = """<!DOCTYPE html>
   {error_banner}
 
   <form method="GET" action="/doors" class="controls">
+    <input type="hidden" name="year" id="year-field" value="{selected_year}">
+    <input type="hidden" name="month" id="month-field" value="{selected_month}">
     <select name="device_id" onchange="this.form.submit()">
       {lock_options}
     </select>
-    <select name="month_select" onchange="
-      var v=this.value.split('-'); var f=this.form;
-      var y=document.createElement('input'); y.type='hidden'; y.name='year'; y.value=v[0]; f.appendChild(y);
-      var m=document.createElement('input'); m.type='hidden'; m.name='month'; m.value=v[1]; f.appendChild(m);
-      f.submit();">
+    <select onchange="
+      var v=this.value.split('-');
+      document.getElementById('year-field').value=v[0];
+      document.getElementById('month-field').value=v[1];
+      this.form.submit();">
       {month_options}
+    </select>
+    <span class="controls-label">Default access window:</span>
+    <select name="default_checkin" onchange="this.form.submit()">
+      {default_checkin_options}
+    </select>
+    <span class="time-arrow">&rarr;</span>
+    <select name="default_checkout" onchange="this.form.submit()">
+      {default_checkout_options}
     </select>
   </form>
 
   <table>
     <thead>
       <tr>
-        <th>Guest</th><th>Arrival</th><th>Departure</th><th>Phone (last 4)</th><th>Status</th><th></th>
+        <th>Guest</th><th>Arrival</th><th>Departure</th><th>Phone (last 4)</th><th>Status</th><th>Access window</th>
       </tr>
     </thead>
     <tbody>
@@ -2655,7 +2645,7 @@ DOORS_TEMPLATE = """<!DOCTYPE html>
     </tbody>
   </table>
 
-  <p class="footer-note">"Sent" only reflects codes this app itself has created -- Kwikset's API has no way to read codes back off the physical lock, so this can't detect codes added via the Kwikset app or keypad. This page has no login — don't share the URL publicly, since it can create real door access codes.</p>
+  <p class="footer-note">"Sent" only reflects codes this app itself has created -- Kwikset's API has no way to read codes back off the physical lock, so this can't detect codes added via the Kwikset app or keypad. Each guest's access window defaults to the setting above but can be changed per guest before sending. This page has no login — don't share the URL publicly, since it can create real door access codes.</p>
 </div>
 </body>
 </html>
