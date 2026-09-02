@@ -863,6 +863,7 @@ TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Welcome to {property_name}</title>
 <meta http-equiv="refresh" content="3600">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -879,6 +880,7 @@ TEMPLATE = """<!DOCTYPE html>
   *{{box-sizing:border-box;}}
   body{{
     margin:0;
+    overflow-x:hidden;
     background: var(--limestone);
     color: var(--bark);
     font-family:'Work Sans', sans-serif;
@@ -1169,7 +1171,7 @@ TEMPLATE = """<!DOCTYPE html>
 """
 
 ERROR_TEMPLATE = """<!DOCTYPE html>
-<html><head><meta charset="UTF-8"><title>Welcome screen — error</title>
+<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Welcome screen — error</title>
 <meta http-equiv="refresh" content="300">
 <style>
 body{{font-family:sans-serif;background:#F6F1E1;color:#2A2018;padding:60px;}}
@@ -1878,12 +1880,13 @@ SETUP_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Set up admin password — Villa Brushy Creek</title>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
   :root{{ --creek: #1F3F3D; --creek-deep: #142B29; --limestone: #EFEAD9; --sage: #7C8B65; --clay: #C1652F; --bark: #2A2018; }}
   *{{box-sizing:border-box;}}
-  body{{ margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
+  body{{ margin:0; min-height:100vh; overflow-x:hidden; display:flex; align-items:center; justify-content:center;
     background: linear-gradient(180deg, var(--creek) 0%, var(--creek-deep) 100%);
     font-family:'Work Sans', sans-serif; padding: 20px; }}
   .card{{ background:#fff; border-radius:18px; padding:36px 32px; max-width:380px; width:100%; }}
@@ -1922,12 +1925,13 @@ LOGIN_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Log in — Villa Brushy Creek</title>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
   :root{{ --creek: #1F3F3D; --creek-deep: #142B29; --limestone: #EFEAD9; --sage: #7C8B65; --clay: #C1652F; --bark: #2A2018; }}
   *{{box-sizing:border-box;}}
-  body{{ margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
+  body{{ margin:0; min-height:100vh; overflow-x:hidden; display:flex; align-items:center; justify-content:center;
     background: linear-gradient(180deg, var(--creek) 0%, var(--creek-deep) 100%);
     font-family:'Work Sans', sans-serif; padding: 20px; }}
   .card{{ background:#fff; border-radius:18px; padding:36px 32px; max-width:340px; width:100%; }}
@@ -1985,19 +1989,26 @@ USERS_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Users — Villa Brushy Creek</title>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
   :root{{ --creek: #1F3F3D; --creek-deep: #142B29; --limestone: #EFEAD9; --sage: #7C8B65; --clay: #C1652F; --bark: #2A2018; }}
   *{{box-sizing:border-box;}}
-  body{{ margin:0; background: var(--limestone); color: var(--bark);
+  body{{ margin:0; overflow-x:hidden; background: var(--limestone); color: var(--bark);
     font-family:'Work Sans', sans-serif; padding: 40px 32px 60px; }}
   .wrap{{ max-width: 780px; margin:0 auto; }}
   h1{{ font-family:'Fraunces', serif; font-weight:500; font-size: 34px; color: var(--creek-deep); margin: 0 0 6px; }}
+  @media (max-width: 600px){{
+    body{{ padding: 20px 16px 40px; }}
+    h1{{ font-size: 26px; }}
+  }}
   .subtitle{{ color:#77705C; margin: 0 0 20px; font-size:14px; }}
   .back-link{{ font-size: 13px; color: var(--creek); text-decoration:none; }}
   .back-link:hover{{ text-decoration:underline; }}
-  table{{ width:100%; border-collapse: collapse; background:#fff; border-radius: 14px; overflow:hidden; border:1px solid #E2DBC5; margin-bottom: 28px; }}
+  table{{ width:100%; border-collapse: collapse; background:#fff; border-radius: 14px; overflow:hidden; border:1px solid #E2DBC5; margin-bottom: 0; }}
+  .table-scroll{{ overflow-x:auto; -webkit-overflow-scrolling:touch; margin-bottom: 28px; }}
+  .table-scroll table{{ min-width: 560px; }}
   th{{ text-align:left; font-size: 11px; text-transform:uppercase; letter-spacing:0.08em; color:#8A7F63;
     padding: 14px 16px; border-bottom: 1px solid #E2DBC5; background:#FAF6E9; }}
   td{{ padding: 14px 16px; border-bottom: 1px solid #EFEAD9; font-size: 14px; vertical-align: middle; }}
@@ -2040,12 +2051,14 @@ USERS_TEMPLATE = """<!DOCTYPE html>
     <form method="POST" action="/logout" class="logout-form">{csrf_field}<button type="submit" class="logout-btn">Log out</button></form>
   </p>
 
+  <div class="table-scroll">
   <table>
     <thead><tr><th>Username</th><th>Status</th><th></th><th></th></tr></thead>
     <tbody>
       {rows}
     </tbody>
   </table>
+  </div>
 
   <div class="add-user-card">
     <form method="POST" action="/users/add" class="add-user-form">
@@ -2726,6 +2739,7 @@ MANAGE_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Manage — Villa Brushy Creek Welcome Screen</title>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
@@ -2734,12 +2748,16 @@ MANAGE_TEMPLATE = """<!DOCTYPE html>
     --sage: #7C8B65; --clay: #C1652F; --bark: #2A2018;
   }}
   *{{box-sizing:border-box;}}
-  body{{ margin:0; background: var(--limestone); color: var(--bark);
+  body{{ margin:0; overflow-x:hidden; background: var(--limestone); color: var(--bark);
     font-family:'Work Sans', sans-serif; padding: 40px 32px 60px; }}
   .wrap{{ max-width: 980px; margin:0 auto; }}
   h1{{ font-family:'Fraunces', serif; font-weight:500; font-size: 34px;
     color: var(--creek-deep); margin: 0 0 6px; }}
   .subtitle{{ color:#77705C; margin: 0 0 28px; font-size:14px; }}
+  @media (max-width: 600px){{
+    body{{ padding: 20px 16px 40px; }}
+    h1{{ font-size: 26px; }}
+  }}
   .back-link{{ font-size: 13px; color: var(--creek); text-decoration:none; }}
   .back-link:hover{{ text-decoration:underline; }}
   .error-banner{{
@@ -2759,6 +2777,8 @@ MANAGE_TEMPLATE = """<!DOCTYPE html>
   .mode-explainer{{ font-size: 13px; color:#77705C; margin-bottom: 28px; }}
   table{{ width:100%; border-collapse: collapse; background:#fff;
     border-radius: 14px; overflow:hidden; border:1px solid #E2DBC5; }}
+  .table-scroll{{ overflow-x:auto; -webkit-overflow-scrolling:touch; }}
+  .table-scroll table{{ min-width: 640px; }}
   th{{
     text-align:left; font-size: 11px; text-transform:uppercase; letter-spacing:0.08em;
     color:#8A7F63; padding: 14px 16px; border-bottom: 1px solid #E2DBC5; background:#FAF6E9;
@@ -2806,6 +2826,7 @@ MANAGE_TEMPLATE = """<!DOCTYPE html>
     hourly refresh, until you pick someone else or switch back to Auto.
   </p>
 
+  <div class="table-scroll">
   <table>
     <thead>
       <tr>
@@ -2817,6 +2838,7 @@ MANAGE_TEMPLATE = """<!DOCTYPE html>
       {rows}
     </tbody>
   </table>
+  </div>
 
   <p class="footer-note">Showing the next {upcoming_count_label} upcoming bookings. This page has no login — don't share the URL publicly.</p>
 </div>
@@ -2867,6 +2889,7 @@ CLEANING_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Cleaning Checklist — Villa Brushy Creek</title>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
@@ -2875,12 +2898,16 @@ CLEANING_TEMPLATE = """<!DOCTYPE html>
     --sage: #7C8B65; --clay: #C1652F; --bark: #2A2018;
   }}
   *{{box-sizing:border-box;}}
-  body{{ margin:0; background: var(--limestone); color: var(--bark);
+  body{{ margin:0; overflow-x:hidden; background: var(--limestone); color: var(--bark);
     font-family:'Work Sans', sans-serif; padding: 40px 32px 60px; }}
   .wrap{{ max-width: 900px; margin:0 auto; }}
   h1{{ font-family:'Fraunces', serif; font-weight:500; font-size: 34px;
     color: var(--creek-deep); margin: 0 0 6px; }}
   .subtitle{{ color:#77705C; margin: 0 0 28px; font-size:14px; }}
+  @media (max-width: 600px){{
+    body{{ padding: 20px 16px 40px; }}
+    h1{{ font-size: 26px; }}
+  }}
   .back-link{{ font-size: 13px; color: var(--creek); text-decoration:none; }}
   .back-link:hover{{ text-decoration:underline; }}
   .error-banner{{
@@ -3002,6 +3029,7 @@ POOL_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Pool Control — {system_name}</title>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
@@ -3010,7 +3038,7 @@ POOL_TEMPLATE = """<!DOCTYPE html>
     --sage: #7C8B65; --clay: #C1652F; --bark: #2A2018;
   }}
   *{{box-sizing:border-box;}}
-  body{{ margin:0; background: var(--limestone); color: var(--bark);
+  body{{ margin:0; overflow-x:hidden; background: var(--limestone); color: var(--bark);
     font-family:'Work Sans', sans-serif; padding: 20px 20px 30px; font-size: 14px; }}
   .wrap{{ max-width: 900px; margin:0 auto; }}
   h1{{ font-family:'Fraunces', serif; font-weight:500; font-size: 24px;
@@ -3244,6 +3272,7 @@ DOORS_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Door Codes — Villa Brushy Creek</title>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
@@ -3252,12 +3281,16 @@ DOORS_TEMPLATE = """<!DOCTYPE html>
     --sage: #7C8B65; --clay: #C1652F; --bark: #2A2018;
   }}
   *{{box-sizing:border-box;}}
-  body{{ margin:0; background: var(--limestone); color: var(--bark);
+  body{{ margin:0; overflow-x:hidden; background: var(--limestone); color: var(--bark);
     font-family:'Work Sans', sans-serif; padding: 40px 32px 60px; }}
   .wrap{{ max-width: 980px; margin:0 auto; }}
   h1{{ font-family:'Fraunces', serif; font-weight:500; font-size: 34px;
     color: var(--creek-deep); margin: 0 0 6px; }}
   .subtitle{{ color:#77705C; margin: 0 0 20px; font-size:14px; }}
+  @media (max-width: 600px){{
+    body{{ padding: 20px 16px 40px; }}
+    h1{{ font-size: 26px; }}
+  }}
   .back-link{{ font-size: 13px; color: var(--creek); text-decoration:none; }}
   .back-link:hover{{ text-decoration:underline; }}
   .error-banner{{
@@ -3275,6 +3308,8 @@ DOORS_TEMPLATE = """<!DOCTYPE html>
   .time-arrow{{ color:#9A9276; font-size: 13px; }}
   table{{ width:100%; border-collapse: collapse; background:#fff;
     border-radius: 14px; overflow:hidden; border:1px solid #E2DBC5; }}
+  .table-scroll{{ overflow-x:auto; -webkit-overflow-scrolling:touch; margin-bottom: 20px; }}
+  .table-scroll table{{ min-width: 900px; }}
   th{{
     text-align:left; font-size: 11px; text-transform:uppercase; letter-spacing:0.08em;
     color:#8A7F63; padding: 14px 16px; border-bottom: 1px solid #E2DBC5; background:#FAF6E9;
@@ -3346,6 +3381,7 @@ DOORS_TEMPLATE = """<!DOCTYPE html>
     </select>
   </form>
 
+  <div class="table-scroll">
   <table>
     <thead>
       <tr>
@@ -3356,8 +3392,10 @@ DOORS_TEMPLATE = """<!DOCTYPE html>
       {guest_rows}
     </tbody>
   </table>
+  </div>
 
   <h2 class="section-title" id="all-codes">All Door Codes</h2>
+  <div class="table-scroll">
   <table>
     <thead>
       <tr>
@@ -3368,6 +3406,7 @@ DOORS_TEMPLATE = """<!DOCTYPE html>
       {all_codes_rows}
     </tbody>
   </table>
+  </div>
 
   <p class="footer-note">"Sent" only reflects codes this app itself has created -- Kwikset's API has no way to read codes back off the physical lock, so this can't detect codes added via the Kwikset app or keypad. Each guest's access window defaults to the setting above but can be changed per guest before sending. "Expired" is based on the code's own valid-until time, not a live check against the lock -- Kwikset's API can't confirm whether an expired code has actually stopped working, only that its scheduled window has passed. This page has no login — don't share the URL publicly, since it can create real door access codes.</p>
 </div>

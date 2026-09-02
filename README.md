@@ -71,6 +71,22 @@ git push
 
 Render auto-redeploys on every push to `main`.
 
+## Mobile & tablet support
+
+Every page works on phones and tablets, not just desktop-width
+screens -- previously none of the pages had a mobile viewport meta
+tag at all, which is the main reason things looked broken (tiny,
+zoomed-out text) on a phone regardless of any other CSS.
+
+- **Wide data tables** (`/manage`, `/users`, and both tables on
+  `/doors`) scroll horizontally within their own container on narrow
+  screens rather than squeezing illegibly or breaking the page layout
+  -- swipe sideways on a table to see columns that don't fit.
+- **Padding and heading sizes shrink** on screens under 600px wide so
+  content isn't crowded out by desktop-sized margins.
+- The guest-facing welcome screen (`/`) was already built for
+  landscape tablets and adapts further down to phone widths too.
+
 ## Securing this site
 
 Every page on this site now requires logging in -- previously `/manage`,
