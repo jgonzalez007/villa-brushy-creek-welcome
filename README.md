@@ -93,6 +93,26 @@ changes how it labels these, this detection would need updating to
 match. A failed lookup for one guest shows "Unknown" rather than
 breaking the row or the page.
 
+**Note on Airbnb bookings:** Airbnb handles its own damage protection
+outside OwnerRez entirely -- checked directly against real account
+data (payments, full booking detail, and quotes, across many current
+and past bookings) and confirmed there's no deposit record of any kind
+for Airbnb-sourced bookings. "Not received" is the factually correct
+and expected result for every Airbnb guest; this column is only
+meaningful for direct bookings, where OwnerRez itself manages deposit
+collection.
+
+### Agreement status
+
+Shows "Signed" or "Not signed" per guest, using OwnerRez's real
+`include_agreements` API parameter (confirmed working directly with
+OwnerRez support via their developer forum) -- each booking can carry
+a list of rental agreements, and an entry with an actual signed date
+means it was actually e-signed through OwnerRez's own signing link. A
+guest who signed on paper or through another service won't show as
+signed here, since OwnerRez itself only records a signature through
+its own flow (see OwnerRez's help docs on rental agreements).
+
 ### All Door Codes
 
 At the bottom of the page, a second table lists every code this app

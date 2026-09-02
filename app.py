@@ -427,6 +427,14 @@ def _booking_to_guest_dict(b):
     guest_last_name = b.get("guest", {}).get("last_name", "")
     guest_id = b.get("guest", {}).get("id") or b.get("guest_id")
     property_name = b.get("property", {}).get("name", PROPERTY_DISPLAY_NAME)
+    # Confirmed via OwnerRez's own webhook payload docs + a staff forum
+    # reply: agreements come back as a list of {date, name} -- an entry
+    # with a real date means it was actually signed. Unsigned/never-sent
+    # agreements simply aren't in the list (or would have a null date) --
+    # handled defensively either way.
+    agreements = b.get("agreements") or []
+    agreement_signed = any(a.get("date") for a in agreements)
+    agreement_signed_date = next((a.get("date") for a in agreements if a.get("date")), None)
     return {
         "booking_key": _booking_key(b),
         "booking_id": b.get("id"),
@@ -442,6 +450,8 @@ def _booking_to_guest_dict(b):
         "children": b.get("children", 0),
         "platform": b.get("listing_site", "Direct"),
         "confirmation": b.get("platform_reservation_number", "—"),
+        "agreement_signed": agreement_signed,
+        "agreement_signed_date": agreement_signed_date,
     }
 
 
@@ -473,6 +483,7 @@ def _fetch_all_bookings():
         params = {
             "since_utc": "2000-01-01T00:00:00Z",
             "include_guest": "true",
+            "include_agreements": "true",
             "limit": page_size,
             "offset": offset,
         }
@@ -2084,6 +2095,11 @@ def doors():
             else:
                 deposit_label, deposit_class = "Not received", "status-off"
 
+            if g.get("agreement_signed"):
+                agreement_label, agreement_class = "Signed", "status-on"
+            else:
+                agreement_label, agreement_class = "Not signed", "status-off"
+
             rows.append(DOORS_ROW_TEMPLATE.format(
                 first_name=g["first_name"],
                 last_name=g["last_name"],
@@ -2094,6 +2110,8 @@ def doors():
                 status_class=status_class,
                 deposit_label=deposit_label,
                 deposit_class=deposit_class,
+                agreement_label=agreement_label,
+                agreement_class=agreement_class,
                 booking_key=g["booking_key"],
                 selected_device_id_for_row=selected_device_id or "",
                 year_for_row=year,
@@ -2688,6 +2706,7 @@ DOORS_ROW_TEMPLATE = """
         <td>{departure_str}</td>
         <td>{last4}</td>
         <td><span class="status-badge {deposit_class}">{deposit_label}</span></td>
+        <td><span class="status-badge {agreement_class}">{agreement_label}</span></td>
         <td><span class="status-badge {status_class}">{status_label}</span></td>
         <td>
           <form method="POST" action="/doors/send" class="row-send-form">
@@ -2835,7 +2854,7 @@ DOORS_TEMPLATE = """<!DOCTYPE html>
   <table>
     <thead>
       <tr>
-        <th>Guest</th><th>Arrival</th><th>Departure</th><th>Phone (last 4)</th><th>Deposit</th><th>Status</th><th>Access window</th>
+        <th>Guest</th><th>Arrival</th><th>Departure</th><th>Phone (last 4)</th><th>Deposit</th><th>Agreement</th><th>Status</th><th>Access window</th>
       </tr>
     </thead>
     <tbody>
