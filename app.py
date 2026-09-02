@@ -47,13 +47,16 @@ import base64
 import uuid
 import json
 import sqlite3
+import secrets
+import functools
 import asyncio
 import threading
 import time
 import datetime
 from zoneinfo import ZoneInfo
 import requests
-from flask import Flask, Response, request, redirect
+from flask import Flask, Response, request, redirect, session
+from werkzeug.security import generate_password_hash, check_password_hash
 
 import kwikset_client
 
@@ -136,6 +139,14 @@ KWIKSET_REFRESH_TOKEN = os.environ.get("KWIKSET_REFRESH_TOKEN")
 # Kwikset app or keypad (which this app can't see -- see the /doors
 # README section on why "sent" tracking is local-only).
 KWIKSET_START_SLOT = int(os.environ.get("KWIKSET_START_SLOT", "11"))
+
+# Auth. SECRET_KEY signs the session cookie -- without setting this env
+# var, a random key is generated at every process start, which means
+# everyone gets logged out on every restart/redeploy. Set it explicitly
+# in Render for persistent sessions (any long random string works, e.g.
+# `python3 -c "import secrets; print(secrets.token_hex(32))"`).
+SECRET_KEY = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
+ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "admin")
 
 # In-memory cache of everything the app needs to serve "/", "/manage",
 # and "/cleaning". RLock (not Lock) because route handlers call
@@ -223,8 +234,30 @@ def init_db():
             created_at TEXT,
             PRIMARY KEY (device_id, slot)
         );
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT,
+            created_at TEXT,
+            updated_at TEXT
+        );
     """)
     db.commit()
+
+    # Seed the bootstrap admin account with NO password set -- the app's
+    # before_request guard sends every visitor to /setup until someone
+    # sets this account's first password there. Never seed a real
+    # password here, and never accept one via chat/env var for this --
+    # it must be set by whoever can actually reach the live site.
+    existing_admin = db.execute(
+        "SELECT 1 FROM users WHERE username = ?", (ADMIN_USERNAME,)
+    ).fetchone()
+    if not existing_admin:
+        db.execute(
+            "INSERT INTO users (username, password_hash, created_at) VALUES (?, NULL, ?)",
+            (ADMIN_USERNAME, datetime.datetime.now().isoformat()),
+        )
+        db.commit()
 
     # Seed the Kwikset refresh token from env vars on first run only --
     # after that, the database row is authoritative (and self-updates if
@@ -395,6 +428,75 @@ def db_delete_access_code_record(device_id, slot):
         (device_id, slot),
     )
     db.commit()
+
+
+def db_list_users():
+    db = get_db()
+    return db.execute(
+        "SELECT id, username, password_hash, created_at, updated_at FROM users ORDER BY id"
+    ).fetchall()
+
+
+def db_get_user_by_username(username):
+    db = get_db()
+    return db.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
+
+
+def db_get_user_by_id(user_id):
+    db = get_db()
+    return db.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+
+
+def db_any_user_has_password():
+    """False means no one can log in yet -- the app should be showing
+    the /setup bootstrap flow instead of the normal login page."""
+    db = get_db()
+    row = db.execute(
+        "SELECT 1 FROM users WHERE password_hash IS NOT NULL AND password_hash != '' LIMIT 1"
+    ).fetchone()
+    return row is not None
+
+
+def db_create_user(username, password):
+    db = get_db()
+    now = datetime.datetime.now().isoformat()
+    db.execute(
+        "INSERT INTO users (username, password_hash, created_at, updated_at) VALUES (?, ?, ?, ?)",
+        (username, generate_password_hash(password), now, now),
+    )
+    db.commit()
+
+
+def db_set_user_password(user_id, password):
+    db = get_db()
+    db.execute(
+        "UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?",
+        (generate_password_hash(password), datetime.datetime.now().isoformat(), user_id),
+    )
+    db.commit()
+
+
+def db_delete_user(user_id):
+    db = get_db()
+    db.execute("DELETE FROM users WHERE id = ?", (user_id,))
+    db.commit()
+
+
+def verify_login(username, password):
+    """Returns the user row on success, None on any failure. Deliberately
+    takes the same shape of time whether the username exists or not (by
+    always calling check_password_hash against *something*) so a failed
+    login can't be used to enumerate valid usernames by timing."""
+    user = db_get_user_by_username(username)
+    if user and user["password_hash"]:
+        if check_password_hash(user["password_hash"], password):
+            return user
+        return None
+    # Username doesn't exist, or has no password set yet -- still run a
+    # hash check against a dummy value so this branch takes comparable
+    # time to the real check above.
+    check_password_hash(generate_password_hash("dummy"), password)
+    return None
 
 
 def _db_safe(fn, *args, **kwargs):
@@ -1581,6 +1683,57 @@ def _format_schedule_window(schedule):
 # 7. WEB SERVER
 # ---------------------------------------------------------------------------
 app = Flask(__name__)
+app.secret_key = SECRET_KEY
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    # Secure=True means the browser will only ever send this cookie over
+    # HTTPS -- correct for Render (always HTTPS) but would break local
+    # http://localhost testing, so it's conditional on not being a dev run.
+    SESSION_COOKIE_SECURE=(os.environ.get("DISABLE_SECURE_COOKIE") != "1"),
+)
+
+
+def csrf_field():
+    """Returns a hidden <input> to embed in every POST form. A session
+    without one yet gets a fresh token generated on the spot."""
+    token = session.get("csrf_token")
+    if not token:
+        token = secrets.token_hex(32)
+        session["csrf_token"] = token
+    return f'<input type="hidden" name="csrf_token" value="{token}">'
+
+
+# Paths reachable without being logged in. Exact matches only (not
+# prefixes) -- deliberately narrow so a new route is protected by
+# default unless explicitly added here.
+_PUBLIC_PATHS = {"/login", "/setup"}
+
+
+@app.before_request
+def _require_login():
+    # Bootstrap: nobody has a password set yet -> only /setup is reachable,
+    # and everything else redirects there instead of to a login page that
+    # nothing could actually pass.
+    if not db_any_user_has_password():
+        if request.path != "/setup":
+            return redirect("/setup")
+        return None
+
+    if request.path in _PUBLIC_PATHS:
+        return None
+
+    if not session.get("user_id"):
+        return redirect(f"/login?next={request.path}")
+
+    if request.method == "POST":
+        submitted = request.form.get("csrf_token")
+        expected = session.get("csrf_token")
+        if not submitted or not expected or submitted != expected:
+            return ("Your session expired or this form was already submitted. "
+                    "Go back and reload the page, then try again."), 400
+
+    return None
 
 
 def _no_cache(resp):
@@ -1592,6 +1745,322 @@ def _no_cache(resp):
     resp.headers["Pragma"] = "no-cache"
     resp.headers["Expires"] = "0"
     return resp
+
+
+@app.route("/setup", methods=["GET", "POST"])
+def setup():
+    # This route is reachable pre-login by design (see _require_login),
+    # but only actually does anything while no user has a password set
+    # yet -- once one exists, this becomes a dead end that just bounces
+    # to /login, so it can't be used to create a second unauthenticated
+    # backdoor after the real setup is done.
+    if db_any_user_has_password():
+        return redirect("/login")
+
+    error = None
+    if request.method == "POST":
+        password = request.form.get("password") or ""
+        confirm = request.form.get("confirm") or ""
+        if len(password) < 8:
+            error = "Password must be at least 8 characters."
+        elif password != confirm:
+            error = "Passwords don't match."
+        else:
+            admin = db_get_user_by_username(ADMIN_USERNAME)
+            db_set_user_password(admin["id"], password)
+            return redirect("/login")
+
+    html = SETUP_TEMPLATE.format(
+        username=ADMIN_USERNAME,
+        error_banner=f'<div class="error-banner">{error}</div>' if error else "",
+    )
+    return _no_cache(Response(html, mimetype="text/html"))
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if session.get("user_id"):
+        return redirect("/")
+
+    error = None
+    next_path = request.values.get("next") or "/"
+    if not next_path.startswith("/") or next_path.startswith("//"):
+        next_path = "/"  # never redirect off-site
+
+    if request.method == "POST":
+        username = request.form.get("username") or ""
+        password = request.form.get("password") or ""
+        user = verify_login(username, password)
+        if user:
+            session.clear()
+            session["user_id"] = user["id"]
+            session["username"] = user["username"]
+            return redirect(request.form.get("next") or "/")
+        error = "Incorrect username or password."
+
+    html = LOGIN_TEMPLATE.format(
+        error_banner=f'<div class="error-banner">{error}</div>' if error else "",
+        next_path=next_path,
+    )
+    return _no_cache(Response(html, mimetype="text/html"))
+
+
+@app.route("/logout", methods=["POST"])
+def logout():
+    session.clear()
+    return redirect("/login")
+
+
+@app.route("/users")
+def users_page():
+    users = db_list_users()
+    rows = "".join(
+        USER_ROW_TEMPLATE.format(
+            user_id=u["id"],
+            username=u["username"],
+            status_label="Active" if u["password_hash"] else "Awaiting first login",
+            status_class="status-on" if u["password_hash"] else "status-off",
+            csrf_field=csrf_field(),
+            self_marker=" (you)" if u["id"] == session.get("user_id") else "",
+            delete_disabled="disabled" if len(users) <= 1 else "",
+        )
+        for u in users
+    )
+    html = USERS_TEMPLATE.format(
+        rows=rows,
+        csrf_field=csrf_field(),
+        current_username=session.get("username", ""),
+    )
+    return _no_cache(Response(html, mimetype="text/html"))
+
+
+@app.route("/users/add", methods=["POST"])
+def users_add():
+    username = (request.form.get("username") or "").strip()
+    password = request.form.get("password") or ""
+    if not username:
+        return "Username is required", 400
+    if len(password) < 8:
+        return "Password must be at least 8 characters", 400
+    if db_get_user_by_username(username):
+        return "That username is already taken", 400
+    db_create_user(username, password)
+    return redirect("/users")
+
+
+@app.route("/users/delete", methods=["POST"])
+def users_delete():
+    user_id = request.form.get("user_id")
+    if not user_id:
+        return "Missing user_id", 400
+    if len(db_list_users()) <= 1:
+        return "Can't delete the last remaining user -- that would lock everyone out.", 400
+    db_delete_user(int(user_id))
+    if session.get("user_id") == int(user_id):
+        session.clear()
+        return redirect("/login")
+    return redirect("/users")
+
+
+@app.route("/users/reset_password", methods=["POST"])
+def users_reset_password():
+    user_id = request.form.get("user_id")
+    password = request.form.get("password") or ""
+    if not user_id:
+        return "Missing user_id", 400
+    if len(password) < 8:
+        return "Password must be at least 8 characters", 400
+    db_set_user_password(int(user_id), password)
+    return redirect("/users")
+
+
+SETUP_TEMPLATE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Set up admin password — Villa Brushy Creek</title>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{{ --creek: #1F3F3D; --creek-deep: #142B29; --limestone: #EFEAD9; --sage: #7C8B65; --clay: #C1652F; --bark: #2A2018; }}
+  *{{box-sizing:border-box;}}
+  body{{ margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
+    background: linear-gradient(180deg, var(--creek) 0%, var(--creek-deep) 100%);
+    font-family:'Work Sans', sans-serif; padding: 20px; }}
+  .card{{ background:#fff; border-radius:18px; padding:36px 32px; max-width:380px; width:100%; }}
+  h1{{ font-family:'Fraunces', serif; font-weight:500; font-size:24px; color: var(--creek-deep); margin:0 0 6px; }}
+  .subtitle{{ font-size:13px; color:#77705C; margin:0 0 24px; }}
+  label{{ font-size:12px; text-transform:uppercase; letter-spacing:0.06em; color:#8A7F63; display:block; margin-bottom:6px; }}
+  input{{ width:100%; font-family:'Work Sans', sans-serif; font-size:15px; padding:10px 12px;
+    border-radius:9px; border:1px solid #DCD4B8; margin-bottom:16px; }}
+  button{{ width:100%; font-family:'Work Sans', sans-serif; font-size:14px; font-weight:500;
+    padding:11px; border-radius:100px; border:none; background: var(--creek); color:#fff; cursor:pointer; }}
+  button:hover{{ background: var(--creek-deep); }}
+  .error-banner{{ background:#FBEAE0; border:1px solid #E8B99B; color:#8A3D14; padding:10px 14px;
+    border-radius:10px; margin-bottom:18px; font-size:13px; }}
+  .hint{{ font-size:12px; color:#9A9276; margin-top:-10px; margin-bottom:18px; }}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Set up admin access</h1>
+  <p class="subtitle">This site isn't secured yet. Choose a password for the "{username}" account to finish setup.</p>
+  {error_banner}
+  <form method="POST">
+    <label>Password</label>
+    <input type="password" name="password" required autofocus>
+    <label>Confirm password</label>
+    <input type="password" name="confirm" required>
+    <p class="hint">At least 8 characters.</p>
+    <button type="submit">Set password &amp; continue</button>
+  </form>
+</div>
+</body>
+</html>
+"""
+
+LOGIN_TEMPLATE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Log in — Villa Brushy Creek</title>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{{ --creek: #1F3F3D; --creek-deep: #142B29; --limestone: #EFEAD9; --sage: #7C8B65; --clay: #C1652F; --bark: #2A2018; }}
+  *{{box-sizing:border-box;}}
+  body{{ margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
+    background: linear-gradient(180deg, var(--creek) 0%, var(--creek-deep) 100%);
+    font-family:'Work Sans', sans-serif; padding: 20px; }}
+  .card{{ background:#fff; border-radius:18px; padding:36px 32px; max-width:340px; width:100%; }}
+  h1{{ font-family:'Fraunces', serif; font-weight:500; font-size:24px; color: var(--creek-deep); margin:0 0 24px; }}
+  label{{ font-size:12px; text-transform:uppercase; letter-spacing:0.06em; color:#8A7F63; display:block; margin-bottom:6px; }}
+  input{{ width:100%; font-family:'Work Sans', sans-serif; font-size:15px; padding:10px 12px;
+    border-radius:9px; border:1px solid #DCD4B8; margin-bottom:16px; }}
+  button{{ width:100%; font-family:'Work Sans', sans-serif; font-size:14px; font-weight:500;
+    padding:11px; border-radius:100px; border:none; background: var(--creek); color:#fff; cursor:pointer; }}
+  button:hover{{ background: var(--creek-deep); }}
+  .error-banner{{ background:#FBEAE0; border:1px solid #E8B99B; color:#8A3D14; padding:10px 14px;
+    border-radius:10px; margin-bottom:18px; font-size:13px; }}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Villa Brushy Creek</h1>
+  {error_banner}
+  <form method="POST">
+    <input type="hidden" name="next" value="{next_path}">
+    <label>Username</label>
+    <input type="text" name="username" required autofocus>
+    <label>Password</label>
+    <input type="password" name="password" required>
+    <button type="submit">Log in</button>
+  </form>
+</div>
+</body>
+</html>
+"""
+
+USER_ROW_TEMPLATE = """
+      <tr>
+        <td class="guest-name">{username}{self_marker}</td>
+        <td><span class="status-badge {status_class}">{status_label}</span></td>
+        <td>
+          <form method="POST" action="/users/reset_password" class="row-send-form">
+            {csrf_field}
+            <input type="hidden" name="user_id" value="{user_id}">
+            <input type="password" name="password" placeholder="New password" class="row-time-select" required>
+            <button type="submit" class="select-btn">Set password</button>
+          </form>
+        </td>
+        <td>
+          <form method="POST" action="/users/delete" onsubmit="return confirm('Remove this user?');">
+            {csrf_field}
+            <input type="hidden" name="user_id" value="{user_id}">
+            <button type="submit" class="delete-btn" {delete_disabled}>Remove</button>
+          </form>
+        </td>
+      </tr>
+"""
+
+USERS_TEMPLATE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Users — Villa Brushy Creek</title>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{{ --creek: #1F3F3D; --creek-deep: #142B29; --limestone: #EFEAD9; --sage: #7C8B65; --clay: #C1652F; --bark: #2A2018; }}
+  *{{box-sizing:border-box;}}
+  body{{ margin:0; background: var(--limestone); color: var(--bark);
+    font-family:'Work Sans', sans-serif; padding: 40px 32px 60px; }}
+  .wrap{{ max-width: 780px; margin:0 auto; }}
+  h1{{ font-family:'Fraunces', serif; font-weight:500; font-size: 34px; color: var(--creek-deep); margin: 0 0 6px; }}
+  .subtitle{{ color:#77705C; margin: 0 0 20px; font-size:14px; }}
+  .back-link{{ font-size: 13px; color: var(--creek); text-decoration:none; }}
+  .back-link:hover{{ text-decoration:underline; }}
+  table{{ width:100%; border-collapse: collapse; background:#fff; border-radius: 14px; overflow:hidden; border:1px solid #E2DBC5; margin-bottom: 28px; }}
+  th{{ text-align:left; font-size: 11px; text-transform:uppercase; letter-spacing:0.08em; color:#8A7F63;
+    padding: 14px 16px; border-bottom: 1px solid #E2DBC5; background:#FAF6E9; }}
+  td{{ padding: 14px 16px; border-bottom: 1px solid #EFEAD9; font-size: 14px; vertical-align: middle; }}
+  tr:last-child td{{ border-bottom:none; }}
+  .guest-name{{ font-family:'Fraunces', serif; font-weight:500; font-size: 16px; color: var(--creek-deep); }}
+  .status-badge{{ display:inline-block; font-size: 11px; font-weight:600; padding: 2px 9px; border-radius: 100px; }}
+  .status-on{{ background: var(--sage); color:#fff; }}
+  .status-off{{ background:#DCD4B8; color:#5C5443; }}
+  .row-send-form{{ display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin:0; }}
+  .row-time-select{{ font-family:'Work Sans', sans-serif; font-size: 12px; padding: 6px 8px;
+    border-radius: 7px; border:1px solid #DCD4B8; }}
+  .select-btn{{ font-family:'Work Sans', sans-serif; font-size: 13px; font-weight:500; padding: 8px 14px;
+    border-radius: 100px; border:1px solid var(--clay); background:#fff; color: var(--clay); cursor:pointer; white-space:nowrap; }}
+  .select-btn:hover{{ background: var(--clay); color:#fff; }}
+  .delete-btn{{ font-family:'Work Sans', sans-serif; font-size: 12px; color:#8A7F63; background:none;
+    border:1px solid #DCD4B8; border-radius:100px; padding: 6px 14px; cursor:pointer; }}
+  .delete-btn:hover{{ border-color: var(--clay); color: var(--clay); }}
+  .delete-btn[disabled]{{ opacity:0.4; cursor:default; }}
+  .add-user-card{{ background:#fff; border:1px solid #E2DBC5; border-radius:14px; padding: 18px 20px; }}
+  .add-user-form{{ display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end; }}
+  .form-field{{ display:flex; flex-direction:column; gap:4px; }}
+  .form-field label{{ font-size: 10px; text-transform:uppercase; letter-spacing:0.06em; color:#8A7F63; }}
+  .form-field input{{ font-family:'Work Sans', sans-serif; font-size: 13px; padding: 8px 10px;
+    border-radius: 7px; border:1px solid #DCD4B8; }}
+  .add-user-btn{{ font-family:'Work Sans', sans-serif; font-size: 13px; font-weight:500; padding: 9px 18px;
+    border-radius: 100px; border:1px solid var(--creek); background: var(--creek); color:#fff; cursor:pointer; }}
+  .add-user-btn:hover{{ background: var(--creek-deep); }}
+  .footer-note{{ margin-top: 24px; font-size: 12px; color:#9A9276; }}
+  form.logout-form{{ display:inline; margin:0; }}
+  .logout-btn{{ background:none; border:none; color: var(--creek); font-size:13px; cursor:pointer;
+    text-decoration:none; padding:0; font-family:'Work Sans', sans-serif; }}
+  .logout-btn:hover{{ text-decoration:underline; }}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a class="back-link" href="/">&larr; Back to welcome screen</a> · <a class="back-link" href="/manage">Manage arrivals</a> · <a class="back-link" href="/cleaning">Cleaning checklist</a> · <a class="back-link" href="/pool">Pool control</a> · <a class="back-link" href="/doors">Door codes</a>
+  <h1>Users</h1>
+  <p class="subtitle">Logged in as {current_username} ·
+    <form method="POST" action="/logout" class="logout-form">{csrf_field}<button type="submit" class="logout-btn">Log out</button></form>
+  </p>
+
+  <table>
+    <thead><tr><th>Username</th><th>Status</th><th></th><th></th></tr></thead>
+    <tbody>
+      {rows}
+    </tbody>
+  </table>
+
+  <div class="add-user-card">
+    <form method="POST" action="/users/add" class="add-user-form">
+      {csrf_field}
+      <div class="form-field"><label>Username</label><input type="text" name="username" required></div>
+      <div class="form-field"><label>Password</label><input type="password" name="password" required></div>
+      <button type="submit" class="add-user-btn">Add user</button>
+    </form>
+  </div>
+
+  <p class="footer-note">Anyone with a login here can reach every page on this site, including pool control and sending door codes -- there's no separate permission tiers yet. Keep this list to people you'd hand a physical key to.</p>
+</div>
+</body>
+</html>
+"""
 
 
 @app.route("/")
@@ -1672,6 +2141,7 @@ def manage():
                 row_class="manage-row-selected" if is_selected else "",
                 button_label="Currently showing" if is_selected else "Show this guest",
                 button_disabled="disabled" if is_selected else "",
+                csrf_field=csrf_field(),
             ))
         rows_html = "".join(row_parts)
 
@@ -1685,6 +2155,7 @@ def manage():
             f'<div class="error-banner">Last refresh failed: {last_error}</div>'
             if last_error else ""
         ),
+        csrf_field=csrf_field(),
     )
     return _no_cache(Response(html, mimetype="text/html"))
 
@@ -1743,6 +2214,7 @@ def cleaning():
                     task_name=task_name,
                     checked="checked" if checked else "",
                     done_class="task-done" if checked else "",
+                    csrf_field=csrf_field(),
                 )
                 for task_name, checked in task_state.items()
             )
@@ -1758,6 +2230,7 @@ def cleaning():
                 ready_badge='<span class="ready-badge">Ready ✓</span>' if all_done else "",
                 card_class="cleaning-card-done" if all_done else "",
                 checkbox_rows=checkbox_rows,
+                csrf_field=csrf_field(),
             ))
         cards_html = "".join(cards)
 
@@ -1768,6 +2241,7 @@ def cleaning():
             f'<div class="error-banner">Last refresh failed: {last_error}</div>'
             if last_error else ""
         ),
+        csrf_field=csrf_field(),
     )
     return _no_cache(Response(html, mimetype="text/html"))
 
@@ -1814,6 +2288,7 @@ def pool():
             equipment_cards="",
             schedule_rows='<p class="empty-state">Pool control must be working to manage schedules.</p>',
             device_options="",
+            csrf_field=csrf_field(),
         )
         return _no_cache(Response(html, mimetype="text/html"))
 
@@ -1831,6 +2306,7 @@ def pool():
                 value=s["state"] or "—",
                 status_label="Heating enabled" if s["is_on"] else "Heating off",
                 status_class="status-on" if s["is_on"] else "status-off",
+                csrf_field=csrf_field(),
             )
             for s in setpoints
         )
@@ -1842,6 +2318,7 @@ def pool():
                 status_class="status-on" if e["is_on"] else "status-off",
                 card_class="equipment-card-on" if e["is_on"] else "",
                 button_label="Turn off" if e["is_on"] else "Turn on",
+                csrf_field=csrf_field(),
             )
             for e in equipment
         )
@@ -1869,6 +2346,7 @@ def pool():
                     status_class="status-on" if s["enabled"] else "status-off",
                     row_class="" if s["enabled"] else "schedule-row-disabled",
                     toggle_label="Disable" if s["enabled"] else "Enable",
+                    csrf_field=csrf_field(),
                 )
                 for sid, s in schedules
             )
@@ -1888,6 +2366,7 @@ def pool():
             equipment_cards=equipment_html or '<p class="empty-state">No controllable equipment found.</p>',
             schedule_rows=schedule_rows,
             device_options=device_options or '<option value="">No equipment available</option>',
+            csrf_field=csrf_field(),
         )
     except Exception as e:
         # Belt-and-suspenders: a fetch can succeed but return data shaped
@@ -1905,6 +2384,7 @@ def pool():
             equipment_cards="",
             schedule_rows="",
             device_options="",
+            csrf_field=csrf_field(),
         )
     return _no_cache(Response(html, mimetype="text/html"))
 
@@ -2120,6 +2600,7 @@ def doors():
                 checkout_options=_time_options_html(default_checkout),
                 send_disabled="disabled" if (existing or not selected_device_id or last4 == "—") else "",
                 send_label="Already sent" if existing else "Send code",
+                csrf_field=csrf_field(),
             ))
         guest_rows = "".join(rows)
 
@@ -2149,6 +2630,7 @@ def doors():
                 expired_class="status-off" if expired else "status-on",
                 row_class="expired-row" if expired else "",
                 device_id=row["device_id"],
+                csrf_field=csrf_field(),
             ))
         all_codes_rows = "".join(code_rows)
 
@@ -2164,6 +2646,7 @@ def doors():
         selected_month_value=f"{year}-{month:02d}",
         selected_year=year,
         selected_month=month,
+        csrf_field=csrf_field(),
     )
     return _no_cache(Response(html, mimetype="text/html"))
 
@@ -2231,6 +2714,7 @@ MANAGE_ROW_TEMPLATE = """
         <td>{platform}<br><span class="conf">{confirmation}</span></td>
         <td>
           <form method="POST" action="/manage/select">
+            {csrf_field}
             <input type="hidden" name="booking_key" value="{booking_key}">
             <button type="submit" class="select-btn" {button_disabled}>{button_label}</button>
           </form>
@@ -2299,17 +2783,19 @@ MANAGE_TEMPLATE = """<!DOCTYPE html>
 </head>
 <body>
 <div class="wrap">
-  <a class="back-link" href="/">&larr; Back to welcome screen</a> · <a class="back-link" href="/cleaning">Cleaning checklist</a> · <a class="back-link" href="/pool">Pool control</a> · <a class="back-link" href="/doors">Door codes &rarr;</a>
+  <a class="back-link" href="/">&larr; Back to welcome screen</a> · <a class="back-link" href="/cleaning">Cleaning checklist</a> · <a class="back-link" href="/pool">Pool control</a> · <a class="back-link" href="/doors">Door codes</a> · <a class="back-link" href="/users">Users</a> · <form method="POST" action="/logout" style="display:inline;margin:0;">{csrf_field}<button type="submit" class="back-link" style="background:none;border:none;cursor:pointer;font:inherit;padding:0;">Log out</button></form>
   <h1>Upcoming Arrivals</h1>
   <p class="subtitle">Last refreshed: {last_updated} · <a class="back-link" href="/refresh">Refresh now</a></p>
   {error_banner}
 
   <div class="mode-toggle">
     <form method="POST" action="/manage/mode">
+      {csrf_field}
       <input type="hidden" name="mode" value="auto">
       <button type="submit" class="mode-btn {mode_auto_class}">Auto</button>
     </form>
     <form method="POST" action="/manage/mode">
+      {csrf_field}
       <input type="hidden" name="mode" value="manual">
       <button type="submit" class="mode-btn {mode_manual_class}">Manual</button>
     </form>
@@ -2342,6 +2828,7 @@ MANAGE_TEMPLATE = """<!DOCTYPE html>
 CLEANING_CHECKBOX_TEMPLATE = """
         <li class="task-row {done_class}">
           <form method="POST" action="/cleaning/toggle">
+            {csrf_field}
             <input type="hidden" name="booking_key" value="{booking_key}">
             <input type="hidden" name="task_name" value="{task_name}">
             <label class="task-label">
@@ -2369,6 +2856,7 @@ CLEANING_CARD_TEMPLATE = """
       {checkbox_rows}
     </ul>
     <form method="POST" action="/cleaning/reset">
+      {csrf_field}
       <input type="hidden" name="booking_key" value="{booking_key}">
       <button type="submit" class="reset-btn">Reset checklist</button>
     </form>
@@ -2440,7 +2928,7 @@ CLEANING_TEMPLATE = """<!DOCTYPE html>
 </head>
 <body>
 <div class="wrap">
-  <a class="back-link" href="/">&larr; Back to welcome screen</a> · <a class="back-link" href="/manage">Manage arrivals</a> · <a class="back-link" href="/pool">Pool control</a> · <a class="back-link" href="/doors">Door codes &rarr;</a>
+  <a class="back-link" href="/">&larr; Back to welcome screen</a> · <a class="back-link" href="/manage">Manage arrivals</a> · <a class="back-link" href="/pool">Pool control</a> · <a class="back-link" href="/doors">Door codes</a> · <a class="back-link" href="/users">Users</a> · <form method="POST" action="/logout" style="display:inline;margin:0;">{csrf_field}<button type="submit" class="back-link" style="background:none;border:none;cursor:pointer;font:inherit;padding:0;">Log out</button></form>
   <h1>Cleaning Checklist</h1>
   <p class="subtitle">Last refreshed: {last_updated} · <a class="back-link" href="/refresh">Refresh now</a></p>
   {error_banner}
@@ -2468,6 +2956,7 @@ POOL_SETPOINT_CARD_TEMPLATE = """
       <span class="status-badge {status_class}">{status_label}</span>
     </div>
     <form method="POST" action="/pool/set_temperature" class="setpoint-form">
+      {csrf_field}
       <input type="hidden" name="device_key" value="{key}">
       <input type="number" name="temperature" value="{value}" class="temp-input">
       <button type="submit" class="temp-set-btn">Set</button>
@@ -2482,6 +2971,7 @@ POOL_EQUIPMENT_CARD_TEMPLATE = """
       <span class="status-badge {status_class}">{status_label}</span>
     </div>
     <form method="POST" action="/pool/toggle">
+      {csrf_field}
       <input type="hidden" name="device_key" value="{key}">
       <button type="submit" class="toggle-btn">{button_label}</button>
     </form>
@@ -2496,10 +2986,12 @@ POOL_SCHEDULE_ROW_TEMPLATE = """
     </div>
     <span class="status-badge {status_class}">{status_label}</span>
     <form method="POST" action="/pool/schedule/toggle" class="schedule-btn-form">
+      {csrf_field}
       <input type="hidden" name="schedule_id" value="{schedule_id}">
       <button type="submit" class="toggle-btn">{toggle_label}</button>
     </form>
     <form method="POST" action="/pool/schedule/delete" class="schedule-btn-form">
+      {csrf_field}
       <input type="hidden" name="schedule_id" value="{schedule_id}">
       <button type="submit" class="delete-btn">Delete</button>
     </form>
@@ -2634,7 +3126,7 @@ POOL_TEMPLATE = """<!DOCTYPE html>
 </head>
 <body>
 <div class="wrap">
-  <a class="back-link" href="/">&larr; Back to welcome screen</a> · <a class="back-link" href="/manage">Manage arrivals</a> · <a class="back-link" href="/cleaning">Cleaning checklist</a> · <a class="back-link" href="/doors">Door codes &rarr;</a>
+  <a class="back-link" href="/">&larr; Back to welcome screen</a> · <a class="back-link" href="/manage">Manage arrivals</a> · <a class="back-link" href="/cleaning">Cleaning checklist</a> · <a class="back-link" href="/doors">Door codes</a> · <a class="back-link" href="/users">Users</a> · <form method="POST" action="/logout" style="display:inline;margin:0;">{csrf_field}<button type="submit" class="back-link" style="background:none;border:none;cursor:pointer;font:inherit;padding:0;">Log out</button></form>
   <div><h1>{system_name}</h1>{online_badge}</div>
   <p class="subtitle"><a class="back-link" href="/pool">Refresh now</a></p>
   {error_banner}
@@ -2661,6 +3153,7 @@ POOL_TEMPLATE = """<!DOCTYPE html>
   <div class="add-schedule-card">
     <form method="POST" action="/pool/schedule/add" class="add-schedule-form"
           onsubmit="document.getElementById('device_label_hidden').value = document.getElementById('device_key_select').selectedOptions[0].dataset.label || '';">
+      {csrf_field}
       <div class="form-field">
         <label>Device</label>
         <select name="device_key" id="device_key_select" required>
@@ -2710,6 +3203,7 @@ DOORS_ROW_TEMPLATE = """
         <td><span class="status-badge {status_class}">{status_label}</span></td>
         <td>
           <form method="POST" action="/doors/send" class="row-send-form">
+            {csrf_field}
             <input type="hidden" name="device_id" value="{selected_device_id_for_row}">
             <input type="hidden" name="booking_key" value="{booking_key}">
             <input type="hidden" name="year" value="{year_for_row}">
@@ -2737,6 +3231,7 @@ ALL_CODES_ROW_TEMPLATE = """
         <td><span class="status-badge {expired_class}">{expired_label}</span></td>
         <td>
           <form method="POST" action="/doors/remove" onsubmit="return confirm('Remove this door code?');">
+            {csrf_field}
             <input type="hidden" name="device_id" value="{device_id}">
             <input type="hidden" name="slot" value="{slot}">
             <button type="submit" class="delete-btn">Remove</button>
@@ -2823,7 +3318,7 @@ DOORS_TEMPLATE = """<!DOCTYPE html>
 </head>
 <body>
 <div class="wrap">
-  <a class="back-link" href="/">&larr; Back to welcome screen</a> · <a class="back-link" href="/manage">Manage arrivals</a> · <a class="back-link" href="/cleaning">Cleaning checklist</a> · <a class="back-link" href="/pool">Pool control</a> · <a class="back-link" href="/doors">Door codes &rarr;</a>
+  <a class="back-link" href="/">&larr; Back to welcome screen</a> · <a class="back-link" href="/manage">Manage arrivals</a> · <a class="back-link" href="/cleaning">Cleaning checklist</a> · <a class="back-link" href="/pool">Pool control</a> · <a class="back-link" href="/doors">Door codes</a> · <a class="back-link" href="/users">Users</a> · <form method="POST" action="/logout" style="display:inline;margin:0;">{csrf_field}<button type="submit" class="back-link" style="background:none;border:none;cursor:pointer;font:inherit;padding:0;">Log out</button></form>
   <h1>Door Codes</h1>
   <p class="subtitle">Sends a code (last 4 of the guest's phone) valid only for their stay dates.</p>
   {error_banner}

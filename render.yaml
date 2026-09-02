@@ -35,8 +35,12 @@ services:
         sync: false        # optional -- omit to leave /doors showing "not connected"
       - key: KWIKSET_REFRESH_TOKEN
         sync: false        # optional -- from running auth-setup.js once, see README
-      - key: KWIKSET_ADMIN_TOKEN
-        sync: false        # optional -- set a long random string to enable /admin/kwikset-reauth
+      - key: KWIKSET_START_SLOT
+        value: "11"         # slots below this are left alone -- avoids codes set manually via the Kwikset app
+      - key: SECRET_KEY
+        sync: false        # required for persistent sessions -- see README "Securing this site" section
+      - key: ADMIN_USERNAME
+        value: admin        # optional -- change the bootstrap admin's username before first deploy
     disks:
       - name: villa-brushy-creek-data
         mountPath: /var/data

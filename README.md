@@ -71,6 +71,67 @@ git push
 
 Render auto-redeploys on every push to `main`.
 
+## Securing this site
+
+Every page on this site now requires logging in -- previously `/manage`,
+`/cleaning`, `/pool`, and `/doors` had no protection at all, despite
+being able to control physical pool equipment and send real door
+codes.
+
+### First-time setup
+
+On first deploy, no password exists yet. Visiting **any** URL on the
+site redirects to `/setup`, which lets you set the password for the
+bootstrap `admin` account (username configurable via `ADMIN_USERNAME`,
+defaults to `admin`). Once set, `/setup` becomes permanently
+unreachable -- it can't be used to create a second account or reset
+the password later, by design. From then on, every page requires
+logging in at `/login`.
+
+**Set `SECRET_KEY` in Render before your first deploy of this
+version.** This signs the login session cookie. Without it, a random
+key is generated every time the app starts, which means everyone gets
+logged out on every restart or redeploy -- annoying but not a security
+hole. Generate one with:
+```bash
+python3 -c "import secrets; print(secrets.token_hex(32))"
+```
+and set it as `SECRET_KEY` in Render's Environment tab.
+
+### Managing users
+
+`/users` (linked from every admin page's nav bar) lets you add
+additional logins, reset anyone's password, or remove a user. There
+are no permission tiers yet -- anyone who can log in can reach every
+page, including pool control, sending door codes, and this user list
+itself. Keep it to people you'd hand a physical key to. You can't
+delete the last remaining user, so you can't accidentally lock
+yourself out entirely.
+
+### What's protected against
+
+- **CSRF**: every action (toggling pool equipment, sending a door
+  code, adding a user, etc.) requires a per-session token embedded in
+  the page that submitted it. A request forged from another site, or
+  replayed without a valid token, is rejected.
+- **Passwords are hashed**, never stored in plain text.
+- **Session cookies** are `HttpOnly` (inaccessible to page JavaScript)
+  and `Secure` (only ever sent over HTTPS, which Render provides by
+  default).
+
+### What's NOT covered
+
+- No rate limiting on login attempts -- a determined attacker with a
+  weak password to guess against isn't slowed down. Use a genuinely
+  strong password.
+- No password reset via email -- if everyone forgets their password,
+  the only recovery path is deleting the `users` table row directly
+  via the database (Render Shell) and going through `/setup` again.
+- No audit log of who did what.
+
+These are reasonable gaps for a small personal/family-run tool with a
+handful of trusted users, but worth knowing about.
+
 ## Door codes
 
 `/doors` sends Kwikset keypad access codes to guests -- pick a lock,
