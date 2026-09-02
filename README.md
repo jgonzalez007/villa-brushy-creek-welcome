@@ -114,6 +114,17 @@ python3 -c "import secrets; print(secrets.token_hex(32))"
 ```
 and set it as `SECRET_KEY` in Render's Environment tab.
 
+### The menu page
+
+After logging in with no specific destination in mind (e.g. just
+visiting `/login` directly rather than following a link to a specific
+page), you land on `/menu` -- a hub linking to every page: the guest
+welcome screen, and all the host admin pages. Every admin page's nav
+bar also links back to it. Deep links still work as before: if
+something redirects you to log in while trying to reach a specific
+page (e.g. the lobby tablet loading `/`, or a bookmark straight to
+`/pool`), you land on that exact page after logging in, not the menu.
+
 ### Managing users
 
 `/users` (linked from every admin page's nav bar) lets you add

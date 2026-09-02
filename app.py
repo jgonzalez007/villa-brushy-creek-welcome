@@ -1782,12 +1782,12 @@ def setup():
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if session.get("user_id"):
-        return redirect("/")
+        return redirect("/menu")
 
     error = None
-    next_path = request.values.get("next") or "/"
+    next_path = request.values.get("next") or "/menu"
     if not next_path.startswith("/") or next_path.startswith("//"):
-        next_path = "/"  # never redirect off-site
+        next_path = "/menu"  # never redirect off-site
 
     if request.method == "POST":
         username = request.form.get("username") or ""
@@ -1797,7 +1797,7 @@ def login():
             session.clear()
             session["user_id"] = user["id"]
             session["username"] = user["username"]
-            return redirect(request.form.get("next") or "/")
+            return redirect(request.form.get("next") or "/menu")
         error = "Incorrect username or password."
 
     html = LOGIN_TEMPLATE.format(
@@ -1811,6 +1811,91 @@ def login():
 def logout():
     session.clear()
     return redirect("/login")
+
+
+@app.route("/menu")
+def menu():
+    html = MENU_TEMPLATE.format(
+        current_username=session.get("username", ""),
+        csrf_field=csrf_field(),
+    )
+    return _no_cache(Response(html, mimetype="text/html"))
+
+
+MENU_TEMPLATE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Menu — Villa Brushy Creek</title>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{{ --creek: #1F3F3D; --creek-deep: #142B29; --limestone: #EFEAD9; --sage: #7C8B65; --clay: #C1652F; --bark: #2A2018; }}
+  *{{box-sizing:border-box;}}
+  body{{ margin:0; overflow-x:hidden; background: var(--limestone); color: var(--bark);
+    font-family:'Work Sans', sans-serif; padding: 40px 32px 60px; }}
+  @media (max-width: 600px){{
+    body{{ padding: 24px 16px 40px; }}
+  }}
+  .wrap{{ max-width: 780px; margin:0 auto; }}
+  h1{{ font-family:'Fraunces', serif; font-weight:500; font-size: 34px; color: var(--creek-deep); margin: 0 0 6px; }}
+  .subtitle{{ color:#77705C; margin: 0 0 28px; font-size:14px; }}
+  .logout-form{{ display:inline; margin:0; }}
+  .logout-btn{{ background:none; border:none; color: var(--creek); font-size:13px; cursor:pointer;
+    text-decoration:underline; padding:0; font-family:'Work Sans', sans-serif; }}
+  .menu-grid{{ display:grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }}
+  @media (max-width: 520px){{
+    .menu-grid{{ grid-template-columns: 1fr; }}
+  }}
+  .menu-card{{
+    display:block; background:#fff; border:1px solid #E2DBC5; border-radius:16px;
+    padding: 22px 20px; text-decoration:none; color: var(--bark);
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  }}
+  .menu-card:hover{{ border-color: var(--creek); box-shadow: 0 8px 20px -12px rgba(42,32,24,0.3); }}
+  .menu-card-title{{
+    font-family:'Fraunces', serif; font-weight:500; font-size: 19px; color: var(--creek-deep); margin-bottom: 6px;
+  }}
+  .menu-card-desc{{ font-size: 13px; color:#77705C; line-height:1.5; }}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Villa Brushy Creek</h1>
+  <p class="subtitle">Logged in as {current_username} ·
+    <form method="POST" action="/logout" class="logout-form">{csrf_field}<button type="submit" class="logout-btn">Log out</button></form>
+  </p>
+
+  <div class="menu-grid">
+    <a class="menu-card" href="/">
+      <div class="menu-card-title">Welcome Screen</div>
+      <div class="menu-card-desc">The guest-facing display showing the next arriving guest -- what's shown on the lobby tablet.</div>
+    </a>
+    <a class="menu-card" href="/manage">
+      <div class="menu-card-title">Manage Arrivals</div>
+      <div class="menu-card-desc">Pick which guest shows on the welcome screen -- automatic (soonest arrival) or manually pinned.</div>
+    </a>
+    <a class="menu-card" href="/cleaning">
+      <div class="menu-card-title">Cleaning Checklist</div>
+      <div class="menu-card-desc">Turnover checklist per guest, with progress tracking between stays.</div>
+    </a>
+    <a class="menu-card" href="/pool">
+      <div class="menu-card-title">Pool Control</div>
+      <div class="menu-card-desc">Live readings, temperature, equipment on/off, and recurring schedules.</div>
+    </a>
+    <a class="menu-card" href="/doors">
+      <div class="menu-card-title">Door Codes</div>
+      <div class="menu-card-desc">Send Kwikset keypad codes to arriving guests, and manage all codes sent.</div>
+    </a>
+    <a class="menu-card" href="/users">
+      <div class="menu-card-title">Users</div>
+      <div class="menu-card-desc">Add or remove logins, reset passwords.</div>
+    </a>
+  </div>
+</div>
+</body>
+</html>
+"""
 
 
 @app.route("/users")
@@ -2045,7 +2130,7 @@ USERS_TEMPLATE = """<!DOCTYPE html>
 </head>
 <body>
 <div class="wrap">
-  <a class="back-link" href="/">&larr; Back to welcome screen</a> · <a class="back-link" href="/manage">Manage arrivals</a> · <a class="back-link" href="/cleaning">Cleaning checklist</a> · <a class="back-link" href="/pool">Pool control</a> · <a class="back-link" href="/doors">Door codes</a>
+  <a class="back-link" href="/">&larr; Back to welcome screen</a> · <a class="back-link" href="/menu">Menu</a> · <a class="back-link" href="/manage">Manage arrivals</a> · <a class="back-link" href="/cleaning">Cleaning checklist</a> · <a class="back-link" href="/pool">Pool control</a> · <a class="back-link" href="/doors">Door codes</a>
   <h1>Users</h1>
   <p class="subtitle">Logged in as {current_username} ·
     <form method="POST" action="/logout" class="logout-form">{csrf_field}<button type="submit" class="logout-btn">Log out</button></form>
@@ -2803,7 +2888,7 @@ MANAGE_TEMPLATE = """<!DOCTYPE html>
 </head>
 <body>
 <div class="wrap">
-  <a class="back-link" href="/">&larr; Back to welcome screen</a> · <a class="back-link" href="/cleaning">Cleaning checklist</a> · <a class="back-link" href="/pool">Pool control</a> · <a class="back-link" href="/doors">Door codes</a> · <a class="back-link" href="/users">Users</a> · <form method="POST" action="/logout" style="display:inline;margin:0;">{csrf_field}<button type="submit" class="back-link" style="background:none;border:none;cursor:pointer;font:inherit;padding:0;">Log out</button></form>
+  <a class="back-link" href="/">&larr; Back to welcome screen</a> · <a class="back-link" href="/menu">Menu</a> · <a class="back-link" href="/cleaning">Cleaning checklist</a> · <a class="back-link" href="/pool">Pool control</a> · <a class="back-link" href="/doors">Door codes</a> · <a class="back-link" href="/users">Users</a> · <form method="POST" action="/logout" style="display:inline;margin:0;">{csrf_field}<button type="submit" class="back-link" style="background:none;border:none;cursor:pointer;font:inherit;padding:0;">Log out</button></form>
   <h1>Upcoming Arrivals</h1>
   <p class="subtitle">Last refreshed: {last_updated} · <a class="back-link" href="/refresh">Refresh now</a></p>
   {error_banner}
@@ -2955,7 +3040,7 @@ CLEANING_TEMPLATE = """<!DOCTYPE html>
 </head>
 <body>
 <div class="wrap">
-  <a class="back-link" href="/">&larr; Back to welcome screen</a> · <a class="back-link" href="/manage">Manage arrivals</a> · <a class="back-link" href="/pool">Pool control</a> · <a class="back-link" href="/doors">Door codes</a> · <a class="back-link" href="/users">Users</a> · <form method="POST" action="/logout" style="display:inline;margin:0;">{csrf_field}<button type="submit" class="back-link" style="background:none;border:none;cursor:pointer;font:inherit;padding:0;">Log out</button></form>
+  <a class="back-link" href="/">&larr; Back to welcome screen</a> · <a class="back-link" href="/menu">Menu</a> · <a class="back-link" href="/manage">Manage arrivals</a> · <a class="back-link" href="/pool">Pool control</a> · <a class="back-link" href="/doors">Door codes</a> · <a class="back-link" href="/users">Users</a> · <form method="POST" action="/logout" style="display:inline;margin:0;">{csrf_field}<button type="submit" class="back-link" style="background:none;border:none;cursor:pointer;font:inherit;padding:0;">Log out</button></form>
   <h1>Cleaning Checklist</h1>
   <p class="subtitle">Last refreshed: {last_updated} · <a class="back-link" href="/refresh">Refresh now</a></p>
   {error_banner}
@@ -3154,7 +3239,7 @@ POOL_TEMPLATE = """<!DOCTYPE html>
 </head>
 <body>
 <div class="wrap">
-  <a class="back-link" href="/">&larr; Back to welcome screen</a> · <a class="back-link" href="/manage">Manage arrivals</a> · <a class="back-link" href="/cleaning">Cleaning checklist</a> · <a class="back-link" href="/doors">Door codes</a> · <a class="back-link" href="/users">Users</a> · <form method="POST" action="/logout" style="display:inline;margin:0;">{csrf_field}<button type="submit" class="back-link" style="background:none;border:none;cursor:pointer;font:inherit;padding:0;">Log out</button></form>
+  <a class="back-link" href="/">&larr; Back to welcome screen</a> · <a class="back-link" href="/menu">Menu</a> · <a class="back-link" href="/manage">Manage arrivals</a> · <a class="back-link" href="/cleaning">Cleaning checklist</a> · <a class="back-link" href="/doors">Door codes</a> · <a class="back-link" href="/users">Users</a> · <form method="POST" action="/logout" style="display:inline;margin:0;">{csrf_field}<button type="submit" class="back-link" style="background:none;border:none;cursor:pointer;font:inherit;padding:0;">Log out</button></form>
   <div><h1>{system_name}</h1>{online_badge}</div>
   <p class="subtitle"><a class="back-link" href="/pool">Refresh now</a></p>
   {error_banner}
@@ -3353,7 +3438,7 @@ DOORS_TEMPLATE = """<!DOCTYPE html>
 </head>
 <body>
 <div class="wrap">
-  <a class="back-link" href="/">&larr; Back to welcome screen</a> · <a class="back-link" href="/manage">Manage arrivals</a> · <a class="back-link" href="/cleaning">Cleaning checklist</a> · <a class="back-link" href="/pool">Pool control</a> · <a class="back-link" href="/doors">Door codes</a> · <a class="back-link" href="/users">Users</a> · <form method="POST" action="/logout" style="display:inline;margin:0;">{csrf_field}<button type="submit" class="back-link" style="background:none;border:none;cursor:pointer;font:inherit;padding:0;">Log out</button></form>
+  <a class="back-link" href="/">&larr; Back to welcome screen</a> · <a class="back-link" href="/menu">Menu</a> · <a class="back-link" href="/manage">Manage arrivals</a> · <a class="back-link" href="/cleaning">Cleaning checklist</a> · <a class="back-link" href="/pool">Pool control</a> · <a class="back-link" href="/doors">Door codes</a> · <a class="back-link" href="/users">Users</a> · <form method="POST" action="/logout" style="display:inline;margin:0;">{csrf_field}<button type="submit" class="back-link" style="background:none;border:none;cursor:pointer;font:inherit;padding:0;">Log out</button></form>
   <h1>Door Codes</h1>
   <p class="subtitle">Sends a code (last 4 of the guest's phone) valid only for their stay dates.</p>
   {error_banner}
