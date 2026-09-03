@@ -201,6 +201,22 @@ guest who signed on paper or through another service won't show as
 signed here, since OwnerRez itself only records a signature through
 its own flow (see OwnerRez's help docs on rental agreements).
 
+### Manual codes
+
+Above the "All Door Codes" table, a form lets you create a code for
+anyone who isn't a guest -- a cleaner, a contractor, yourself. Pick a
+lock, give it a name (max 14 characters -- Kwikset's own limit), and a
+4-8 digit code. Choose either:
+
+- **Never expires** -- a permanent code, valid indefinitely.
+- **A specific date/time range** -- same as a guest code, just with
+  dates you set yourself instead of derived from a booking.
+
+Manual codes aren't tied to any guest booking, so they always show up
+in the "All Door Codes" table below but never in the guest table
+above. They use the same slot sequence as guest codes (see
+`KWIKSET_START_SLOT`), and can be removed the same way.
+
 ### All Door Codes
 
 At the bottom of the page, a second table lists every code this app

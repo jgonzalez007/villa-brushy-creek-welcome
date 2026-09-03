@@ -2802,6 +2802,53 @@ def doors_remove():
     return redirect("/doors#all-codes")
 
 
+@app.route("/doors/manual_add", methods=["POST"])
+def doors_manual_add():
+    device_id = request.form.get("device_id")
+    name = (request.form.get("name") or "").strip()
+    code = request.form.get("code") or ""
+    never_expire = request.form.get("never_expire") == "on"
+
+    if not device_id or not name:
+        return "Missing device_id or name", 400
+
+    schedule = None
+    if not never_expire:
+        start_date = request.form.get("start_date")
+        start_time = request.form.get("start_time")
+        end_date = request.form.get("end_date")
+        end_time = request.form.get("end_time")
+        if not all([start_date, start_time, end_date, end_time]):
+            return "Start/end date and time are required unless 'Never expires' is checked", 400
+        try:
+            sy, sm, sd = (int(x) for x in start_date.split("-"))
+            sh, smin = (int(x) for x in start_time.split(":"))
+            ey, em, ed = (int(x) for x in end_date.split("-"))
+            eh, emin = (int(x) for x in end_time.split(":"))
+        except ValueError:
+            return "Invalid date/time format", 400
+        schedule = {
+            "type": "date_range",
+            "start": {"year": sy, "month": sm, "day": sd, "hour": sh, "minute": smin},
+            "end": {"year": ey, "month": em, "day": ed, "hour": eh, "minute": emin},
+        }
+
+    try:
+        client = get_kwikset_client()
+        slot = db_next_access_code_slot(device_id)
+        friendly_name = name[:14]
+        client.add_access_code(device_id=device_id, name=friendly_name, code=code, slot=slot, schedule=schedule)
+    except Exception as e:
+        return f"Failed to create door code: {e}", 500
+
+    # booking_key is None here -- this code isn't tied to any guest
+    # booking, so there's nothing to match it against in the guest
+    # table above. It still shows up correctly in the "All Door Codes"
+    # table below, same as any guest-sent code.
+    _db_safe(db_record_access_code, device_id, slot, None, friendly_name, code, schedule)
+    return redirect("/doors#all-codes")
+
+
 MANAGE_ROW_TEMPLATE = """
       <tr class="{row_class}">
         <td class="guest-name">{first_name}</td>
@@ -3433,6 +3480,36 @@ DOORS_TEMPLATE = """<!DOCTYPE html>
     font-family:'Fraunces', serif; font-weight:500; font-size: 20px;
     color: var(--creek-deep); margin: 36px 0 14px;
   }}
+  .manual-code-card{{
+    background:#fff; border:1px solid #E2DBC5; border-radius:14px;
+    padding: 18px 20px; margin-top: 8px;
+  }}
+  .manual-code-title{{
+    font-family:'Fraunces', serif; font-weight:500; font-size: 17px; color: var(--creek-deep); margin-bottom: 4px;
+  }}
+  .manual-code-hint{{ font-size: 13px; color:#77705C; margin: 0 0 16px; }}
+  .manual-code-form{{ display:flex; flex-wrap:wrap; gap: 14px; align-items:flex-end; }}
+  .form-field{{ display:flex; flex-direction:column; gap:4px; }}
+  .form-field label{{ font-size: 10px; text-transform:uppercase; letter-spacing:0.06em; color:#8A7F63; }}
+  .form-field select, .form-field input[type=text], .form-field input[type=date], .form-field input[type=time]{{
+    font-family:'Work Sans', sans-serif; font-size: 13px;
+    padding: 8px 10px; border-radius: 7px; border:1px solid #DCD4B8;
+  }}
+  .checkbox-label{{
+    display:flex; align-items:center; gap:8px; font-size: 13px; color: var(--bark);
+    text-transform:none; letter-spacing:normal; cursor:pointer; padding-bottom: 8px;
+  }}
+  .checkbox-label input{{ width:16px; height:16px; accent-color: var(--sage); }}
+  .manual-date-range{{ display:flex; gap:14px; flex-wrap:wrap; }}
+  .manual-date-range .form-field{{ flex-direction:row; align-items:center; gap:6px; }}
+  .manual-date-range input[type=date]{{ width: 140px; }}
+  .manual-date-range input[type=time]{{ width: 90px; }}
+  .add-schedule-btn{{
+    font-family:'Work Sans', sans-serif; font-size: 12px; font-weight:500;
+    padding: 9px 18px; border-radius: 100px; border:1px solid var(--creek);
+    background: var(--creek); color:#fff; cursor:pointer;
+  }}
+  .add-schedule-btn:hover{{ background: var(--creek-deep); }}
   .footer-note{{ margin-top: 24px; font-size: 12px; color:#9A9276; }}
 </style>
 </head>
@@ -3477,6 +3554,48 @@ DOORS_TEMPLATE = """<!DOCTYPE html>
       {guest_rows}
     </tbody>
   </table>
+  </div>
+
+  <div class="manual-code-card">
+    <div class="manual-code-title">Add a code manually</div>
+    <p class="manual-code-hint">For anyone who isn't a guest -- a cleaner, a contractor, yourself. Not tied to any booking.</p>
+    <form method="POST" action="/doors/manual_add" class="manual-code-form" id="manual-code-form">
+      {csrf_field}
+      <div class="form-field">
+        <label>Lock</label>
+        <select name="device_id" required>
+          {lock_options}
+        </select>
+      </div>
+      <div class="form-field">
+        <label>Name</label>
+        <input type="text" name="name" maxlength="14" placeholder="e.g. Cleaner" required>
+      </div>
+      <div class="form-field">
+        <label>Code</label>
+        <input type="text" name="code" inputmode="numeric" pattern="[0-9]{{4,8}}" maxlength="8" placeholder="4-8 digits" required>
+      </div>
+      <div class="form-field never-expire-field">
+        <label class="checkbox-label">
+          <input type="checkbox" name="never_expire" id="never_expire_check"
+                 onchange="document.getElementById('manual-date-range').style.display = this.checked ? 'none' : 'flex';">
+          Never expires
+        </label>
+      </div>
+      <div class="manual-date-range" id="manual-date-range">
+        <div class="form-field">
+          <label>Starts</label>
+          <input type="date" name="start_date" required>
+          <input type="time" name="start_time" value="00:00" required>
+        </div>
+        <div class="form-field">
+          <label>Ends</label>
+          <input type="date" name="end_date" required>
+          <input type="time" name="end_time" value="23:59" required>
+        </div>
+      </div>
+      <button type="submit" class="add-schedule-btn">Add code</button>
+    </form>
   </div>
 
   <h2 class="section-title" id="all-codes">All Door Codes</h2>
