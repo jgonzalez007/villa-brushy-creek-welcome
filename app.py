@@ -3585,13 +3585,13 @@ DOORS_TEMPLATE = """<!DOCTYPE html>
       <div class="manual-date-range" id="manual-date-range">
         <div class="form-field">
           <label>Starts</label>
-          <input type="date" name="start_date" required>
-          <input type="time" name="start_time" value="00:00" required>
+          <input type="date" name="start_date">
+          <input type="time" name="start_time" value="00:00">
         </div>
         <div class="form-field">
           <label>Ends</label>
-          <input type="date" name="end_date" required>
-          <input type="time" name="end_time" value="23:59" required>
+          <input type="date" name="end_date">
+          <input type="time" name="end_time" value="23:59">
         </div>
       </div>
       <button type="submit" class="add-schedule-btn">Add code</button>
