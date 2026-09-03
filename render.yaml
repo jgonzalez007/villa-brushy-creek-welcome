@@ -41,7 +41,7 @@ services:
         sync: false        # required for persistent sessions -- see README "Securing this site" section
       - key: ADMIN_USERNAME
         value: admin        # optional -- change the bootstrap admin's username before first deploy
-    disks:
-      - name: villa-brushy-creek-data
-        mountPath: /var/data
-        sizeGB: 1               # tiny data (schedules/checklists) -- 1GB is already overkill
+    disk:
+      name: villa-brushy-creek-data
+      mountPath: /var/data
+      sizeGB: 1               # tiny data (schedules/checklists) -- 1GB is already overkill
