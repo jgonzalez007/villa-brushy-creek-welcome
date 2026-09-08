@@ -899,6 +899,26 @@ def _ownerrez_headers():
     }
 
 
+def _raise_with_body(resp):
+    """requests' default raise_for_status() only gives you the status
+    code and a generic phrase -- the actual reason (validation error,
+    missing consent, etc.) is almost always in the response body, and
+    every debugging session in this project so far has needed that body
+    to actually find the real cause. Surface it directly instead of
+    hiding it behind a second manual lookup."""
+    if resp.ok:
+        return
+    body_text = ""
+    try:
+        body_text = resp.text[:800]
+    except Exception:
+        pass
+    raise RuntimeError(
+        f"{resp.status_code} {resp.reason} for {resp.request.method} {resp.request.url}"
+        + (f": {body_text}" if body_text else "")
+    )
+
+
 def ownerrez_create_webhook_subscription(url, category):
     """POST /v2/webhooksubscriptions -- confirmed directly against the
     author's own working ownerrez-mcp-node implementation."""
@@ -911,7 +931,7 @@ def ownerrez_create_webhook_subscription(url, category):
         headers=_ownerrez_headers(),
         timeout=15,
     )
-    resp.raise_for_status()
+    _raise_with_body(resp)
     return resp.json()
 
 
@@ -924,7 +944,7 @@ def ownerrez_list_webhook_subscriptions():
         headers=_ownerrez_headers(),
         timeout=15,
     )
-    resp.raise_for_status()
+    _raise_with_body(resp)
     payload = resp.json()
     return payload.get("items") or payload.get("webhooksubscriptions") or payload.get("subscriptions") or []
 
@@ -942,7 +962,7 @@ def ownerrez_send_message(thread_id, body):
         headers=_ownerrez_headers(),
         timeout=15,
     )
-    resp.raise_for_status()
+    _raise_with_body(resp)
     return resp.json()
 
 
