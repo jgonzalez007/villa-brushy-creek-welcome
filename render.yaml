@@ -36,12 +36,12 @@ services:
       - key: KWIKSET_REFRESH_TOKEN
         sync: false        # optional -- from running auth-setup.js once, see README
       - key: KWIKSET_START_SLOT
-        value: "50"         # slots below this are left alone -- avoids codes set manually via the Kwikset app
+        value: "5"          # slots below this are left alone -- avoids codes set manually via the Kwikset app
       - key: SECRET_KEY
         sync: false        # required for persistent sessions -- see README "Securing this site" section
       - key: ADMIN_USERNAME
         value: admin        # optional -- change the bootstrap admin's username before first deploy
-    disk:
-      name: villa-brushy-creek-data
-      mountPath: /var/data
-      sizeGB: 1               # tiny data (schedules/checklists) -- 1GB is already overkill
+    disks:
+      - name: villa-brushy-creek-data
+        mountPath: /var/data
+        sizeGB: 1               # tiny data (schedules/checklists) -- 1GB is already overkill
