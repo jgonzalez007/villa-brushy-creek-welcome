@@ -78,6 +78,20 @@ screens -- previously none of the pages had a mobile viewport meta
 tag at all, which is the main reason things looked broken (tiny,
 zoomed-out text) on a phone regardless of any other CSS.
 
+### Left sidebar navigation
+
+Every admin page (`/menu`, `/manage`, `/cleaning`, `/pool`, `/doors`,
+`/users`) shares a fixed left sidebar linking to all of them, plus a
+"Logged in as..." line and a Log out button -- replacing the old
+horizontal row of text links at the top of each page. On screens under
+900px wide, the sidebar collapses behind a hamburger button (top-left)
+that slides it in as an overlay; tapping outside it closes it again.
+The guest-facing welcome screen (`/`) and the `/login`/`/setup` pages
+intentionally don't have this sidebar -- it's an admin navigation aid,
+not something a guest or a not-yet-logged-in visitor needs to see.
+
+### Other mobile fixes
+
 - **Wide data tables** (`/manage`, `/users`, and both tables on
   `/doors`) scroll horizontally within their own container on narrow
   screens rather than squeezing illegibly or breaking the page layout

@@ -1706,6 +1706,87 @@ def csrf_field():
     return f'<input type="hidden" name="csrf_token" value="{token}">'
 
 
+# Shared left-sidebar navigation, used on every admin page (not the
+# guest-facing "/" welcome screen, and not /login or /setup). Built as
+# a plain function returning ready-made HTML rather than a .format()
+# template, so its CSS/content never needs brace-escaping.
+_SIDEBAR_NAV_ITEMS = [
+    ("/", "Welcome Screen"),
+    ("/manage", "Manage Arrivals"),
+    ("/cleaning", "Cleaning Checklist"),
+    ("/pool", "Pool Control"),
+    ("/doors", "Door Codes"),
+    ("/users", "Users"),
+]
+
+SIDEBAR_CSS = """
+  .app-shell{ display:flex; align-items:flex-start; min-height:100vh; }
+  .sidebar{
+    width: 220px; flex-shrink:0; background: var(--creek-deep); color: var(--limestone);
+    padding: 24px 18px; box-sizing:border-box; min-height:100vh;
+  }
+  .sidebar-brand{
+    font-family:'Fraunces', serif; font-weight:500; font-size:17px; margin-bottom:24px; color:#fff;
+  }
+  .sidebar-nav{ display:flex; flex-direction:column; gap:4px; }
+  .sidebar-link{
+    display:block; padding:10px 12px; border-radius:9px; color:#D8CBA6;
+    text-decoration:none; font-size:14px;
+  }
+  .sidebar-link:hover{ background: rgba(255,255,255,0.08); color:#fff; }
+  .sidebar-link.active{ background: var(--sage); color:#fff; font-weight:500; }
+  .sidebar-footer{ margin-top:24px; padding-top:16px; border-top:1px solid rgba(255,255,255,0.15); }
+  .sidebar-user{ font-size:12px; color:#B9CFC2; margin-bottom:8px; word-break:break-word; }
+  .sidebar-logout-form{ margin:0; }
+  .sidebar-logout-btn{
+    background:none; border:1px solid rgba(255,255,255,0.25); color:#D8CBA6; font-size:13px;
+    padding:7px 12px; border-radius:100px; cursor:pointer; width:100%; font-family:'Work Sans',sans-serif;
+  }
+  .sidebar-logout-btn:hover{ background: rgba(255,255,255,0.1); color:#fff; }
+  .main-content{ flex:1; min-width:0; }
+  .hamburger-btn{
+    display:none; position:fixed; top:14px; left:14px; z-index:1000;
+    background: var(--creek-deep); color:#fff; border:none; border-radius:8px;
+    width:40px; height:40px; font-size:20px; cursor:pointer; align-items:center; justify-content:center;
+  }
+  .sidebar-backdrop{ display:none; }
+  @media (max-width: 900px){
+    .app-shell{ display:block; }
+    .hamburger-btn{ display:flex; }
+    .sidebar{
+      position:fixed; top:0; left:0; height:100vh; z-index:999; width: 240px;
+      transform: translateX(-100%); transition: transform 0.2s ease; overflow-y:auto;
+    }
+    .sidebar.open{ transform: translateX(0); }
+    .sidebar-backdrop{ position:fixed; inset:0; background:rgba(0,0,0,0.4); z-index:998; }
+    .sidebar-backdrop:not(.open){ display:none; }
+    .main-content{ padding-top: 56px; }
+  }
+"""
+
+
+def render_sidebar(active_path):
+    username = session.get("username", "")
+    links_html = "".join(
+        f'<a class="sidebar-link{" active" if path == active_path else ""}" href="{path}">{label}</a>'
+        for path, label in _SIDEBAR_NAV_ITEMS
+    )
+    return f"""
+<button class="hamburger-btn" onclick="document.getElementById('sidebar').classList.toggle('open'); document.getElementById('sidebar-backdrop').classList.toggle('open');" aria-label="Menu">&#9776;</button>
+<div class="sidebar-backdrop" id="sidebar-backdrop" onclick="document.getElementById('sidebar').classList.remove('open'); this.classList.remove('open');"></div>
+<nav class="sidebar" id="sidebar">
+  <div class="sidebar-brand">Villa Brushy Creek</div>
+  <div class="sidebar-nav">
+    {links_html}
+  </div>
+  <div class="sidebar-footer">
+    <div class="sidebar-user">Logged in as {username}</div>
+    <form method="POST" action="/logout" class="sidebar-logout-form">{csrf_field()}<button type="submit" class="sidebar-logout-btn">Log out</button></form>
+  </div>
+</nav>
+"""
+
+
 # Paths reachable without being logged in. Exact matches only (not
 # prefixes) -- deliberately narrow so a new route is protected by
 # default unless explicitly added here.
@@ -1816,8 +1897,8 @@ def logout():
 @app.route("/menu")
 def menu():
     html = MENU_TEMPLATE.format(
-        current_username=session.get("username", ""),
-        csrf_field=csrf_field(),
+        sidebar=render_sidebar("/menu"),
+        sidebar_css=SIDEBAR_CSS,
     )
     return _no_cache(Response(html, mimetype="text/html"))
 
@@ -1833,16 +1914,13 @@ MENU_TEMPLATE = """<!DOCTYPE html>
   :root{{ --creek: #1F3F3D; --creek-deep: #142B29; --limestone: #EFEAD9; --sage: #7C8B65; --clay: #C1652F; --bark: #2A2018; }}
   *{{box-sizing:border-box;}}
   body{{ margin:0; overflow-x:hidden; background: var(--limestone); color: var(--bark);
-    font-family:'Work Sans', sans-serif; padding: 40px 32px 60px; }}
+    font-family:'Work Sans', sans-serif; }}
+  {sidebar_css}
+  .wrap{{ max-width: 780px; padding: 40px 32px 60px; }}
   @media (max-width: 600px){{
-    body{{ padding: 24px 16px 40px; }}
+    .wrap{{ padding: 24px 16px 40px; }}
   }}
-  .wrap{{ max-width: 780px; margin:0 auto; }}
-  h1{{ font-family:'Fraunces', serif; font-weight:500; font-size: 34px; color: var(--creek-deep); margin: 0 0 6px; }}
-  .subtitle{{ color:#77705C; margin: 0 0 28px; font-size:14px; }}
-  .logout-form{{ display:inline; margin:0; }}
-  .logout-btn{{ background:none; border:none; color: var(--creek); font-size:13px; cursor:pointer;
-    text-decoration:underline; padding:0; font-family:'Work Sans', sans-serif; }}
+  h1{{ font-family:'Fraunces', serif; font-weight:500; font-size: 34px; color: var(--creek-deep); margin: 0 0 28px; }}
   .menu-grid{{ display:grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }}
   @media (max-width: 520px){{
     .menu-grid{{ grid-template-columns: 1fr; }}
@@ -1860,11 +1938,11 @@ MENU_TEMPLATE = """<!DOCTYPE html>
 </style>
 </head>
 <body>
-<div class="wrap">
+<div class="app-shell">
+  {sidebar}
+  <main class="main-content">
+  <div class="wrap">
   <h1>Villa Brushy Creek</h1>
-  <p class="subtitle">Logged in as {current_username} ·
-    <form method="POST" action="/logout" class="logout-form">{csrf_field}<button type="submit" class="logout-btn">Log out</button></form>
-  </p>
 
   <div class="menu-grid">
     <a class="menu-card" href="/">
@@ -1892,6 +1970,8 @@ MENU_TEMPLATE = """<!DOCTYPE html>
       <div class="menu-card-desc">Add or remove logins, reset passwords.</div>
     </a>
   </div>
+  </div>
+  </main>
 </div>
 </body>
 </html>
@@ -1916,7 +1996,8 @@ def users_page():
     html = USERS_TEMPLATE.format(
         rows=rows,
         csrf_field=csrf_field(),
-        current_username=session.get("username", ""),
+        sidebar=render_sidebar("/users"),
+        sidebar_css=SIDEBAR_CSS,
     )
     return _no_cache(Response(html, mimetype="text/html"))
 
@@ -2081,16 +2162,14 @@ USERS_TEMPLATE = """<!DOCTYPE html>
   :root{{ --creek: #1F3F3D; --creek-deep: #142B29; --limestone: #EFEAD9; --sage: #7C8B65; --clay: #C1652F; --bark: #2A2018; }}
   *{{box-sizing:border-box;}}
   body{{ margin:0; overflow-x:hidden; background: var(--limestone); color: var(--bark);
-    font-family:'Work Sans', sans-serif; padding: 40px 32px 60px; }}
-  .wrap{{ max-width: 780px; margin:0 auto; }}
-  h1{{ font-family:'Fraunces', serif; font-weight:500; font-size: 34px; color: var(--creek-deep); margin: 0 0 6px; }}
+    font-family:'Work Sans', sans-serif; }}
+  {sidebar_css}
+  .wrap{{ max-width: 780px; padding: 40px 32px 60px; }}
+  h1{{ font-family:'Fraunces', serif; font-weight:500; font-size: 34px; color: var(--creek-deep); margin: 0 0 20px; }}
   @media (max-width: 600px){{
-    body{{ padding: 20px 16px 40px; }}
+    .wrap{{ padding: 20px 16px 40px; }}
     h1{{ font-size: 26px; }}
   }}
-  .subtitle{{ color:#77705C; margin: 0 0 20px; font-size:14px; }}
-  .back-link{{ font-size: 13px; color: var(--creek); text-decoration:none; }}
-  .back-link:hover{{ text-decoration:underline; }}
   table{{ width:100%; border-collapse: collapse; background:#fff; border-radius: 14px; overflow:hidden; border:1px solid #E2DBC5; margin-bottom: 0; }}
   .table-scroll{{ overflow-x:auto; -webkit-overflow-scrolling:touch; margin-bottom: 28px; }}
   .table-scroll table{{ min-width: 560px; }}
@@ -2122,19 +2201,14 @@ USERS_TEMPLATE = """<!DOCTYPE html>
     border-radius: 100px; border:1px solid var(--creek); background: var(--creek); color:#fff; cursor:pointer; }}
   .add-user-btn:hover{{ background: var(--creek-deep); }}
   .footer-note{{ margin-top: 24px; font-size: 12px; color:#9A9276; }}
-  form.logout-form{{ display:inline; margin:0; }}
-  .logout-btn{{ background:none; border:none; color: var(--creek); font-size:13px; cursor:pointer;
-    text-decoration:none; padding:0; font-family:'Work Sans', sans-serif; }}
-  .logout-btn:hover{{ text-decoration:underline; }}
 </style>
 </head>
 <body>
-<div class="wrap">
-  <a class="back-link" href="/">&larr; Back to welcome screen</a> · <a class="back-link" href="/menu">Menu</a> · <a class="back-link" href="/manage">Manage arrivals</a> · <a class="back-link" href="/cleaning">Cleaning checklist</a> · <a class="back-link" href="/pool">Pool control</a> · <a class="back-link" href="/doors">Door codes</a>
+<div class="app-shell">
+  {sidebar}
+  <main class="main-content">
+  <div class="wrap">
   <h1>Users</h1>
-  <p class="subtitle">Logged in as {current_username} ·
-    <form method="POST" action="/logout" class="logout-form">{csrf_field}<button type="submit" class="logout-btn">Log out</button></form>
-  </p>
 
   <div class="table-scroll">
   <table>
@@ -2155,6 +2229,8 @@ USERS_TEMPLATE = """<!DOCTYPE html>
   </div>
 
   <p class="footer-note">Anyone with a login here can reach every page on this site, including pool control and sending door codes -- there's no separate permission tiers yet. Keep this list to people you'd hand a physical key to.</p>
+  </div>
+  </main>
 </div>
 </body>
 </html>
@@ -2254,6 +2330,8 @@ def manage():
             if last_error else ""
         ),
         csrf_field=csrf_field(),
+        sidebar=render_sidebar("/manage"),
+        sidebar_css=SIDEBAR_CSS,
     )
     return _no_cache(Response(html, mimetype="text/html"))
 
@@ -2340,6 +2418,8 @@ def cleaning():
             if last_error else ""
         ),
         csrf_field=csrf_field(),
+        sidebar=render_sidebar("/cleaning"),
+        sidebar_css=SIDEBAR_CSS,
     )
     return _no_cache(Response(html, mimetype="text/html"))
 
@@ -2387,6 +2467,8 @@ def pool():
             schedule_rows='<p class="empty-state">Pool control must be working to manage schedules.</p>',
             device_options="",
             csrf_field=csrf_field(),
+            sidebar=render_sidebar("/pool"),
+            sidebar_css=SIDEBAR_CSS,
         )
         return _no_cache(Response(html, mimetype="text/html"))
 
@@ -2465,6 +2547,8 @@ def pool():
             schedule_rows=schedule_rows,
             device_options=device_options or '<option value="">No equipment available</option>',
             csrf_field=csrf_field(),
+            sidebar=render_sidebar("/pool"),
+            sidebar_css=SIDEBAR_CSS,
         )
     except Exception as e:
         # Belt-and-suspenders: a fetch can succeed but return data shaped
@@ -2483,6 +2567,8 @@ def pool():
             schedule_rows="",
             device_options="",
             csrf_field=csrf_field(),
+            sidebar=render_sidebar("/pool"),
+            sidebar_css=SIDEBAR_CSS,
         )
     return _no_cache(Response(html, mimetype="text/html"))
 
@@ -2745,6 +2831,8 @@ def doors():
         selected_year=year,
         selected_month=month,
         csrf_field=csrf_field(),
+        sidebar=render_sidebar("/doors"),
+        sidebar_css=SIDEBAR_CSS,
     )
     return _no_cache(Response(html, mimetype="text/html"))
 
@@ -2881,13 +2969,14 @@ MANAGE_TEMPLATE = """<!DOCTYPE html>
   }}
   *{{box-sizing:border-box;}}
   body{{ margin:0; overflow-x:hidden; background: var(--limestone); color: var(--bark);
-    font-family:'Work Sans', sans-serif; padding: 40px 32px 60px; }}
-  .wrap{{ max-width: 980px; margin:0 auto; }}
+    font-family:'Work Sans', sans-serif; }}
+  {sidebar_css}
+  .wrap{{ max-width: 980px; padding: 40px 32px 60px; }}
   h1{{ font-family:'Fraunces', serif; font-weight:500; font-size: 34px;
     color: var(--creek-deep); margin: 0 0 6px; }}
   .subtitle{{ color:#77705C; margin: 0 0 28px; font-size:14px; }}
   @media (max-width: 600px){{
-    body{{ padding: 20px 16px 40px; }}
+    .wrap{{ padding: 20px 16px 40px; }}
     h1{{ font-size: 26px; }}
   }}
   .back-link{{ font-size: 13px; color: var(--creek); text-decoration:none; }}
@@ -2934,8 +3023,10 @@ MANAGE_TEMPLATE = """<!DOCTYPE html>
 </style>
 </head>
 <body>
-<div class="wrap">
-  <a class="back-link" href="/">&larr; Back to welcome screen</a> · <a class="back-link" href="/menu">Menu</a> · <a class="back-link" href="/cleaning">Cleaning checklist</a> · <a class="back-link" href="/pool">Pool control</a> · <a class="back-link" href="/doors">Door codes</a> · <a class="back-link" href="/users">Users</a> · <form method="POST" action="/logout" style="display:inline;margin:0;">{csrf_field}<button type="submit" class="back-link" style="background:none;border:none;cursor:pointer;font:inherit;padding:0;">Log out</button></form>
+<div class="app-shell">
+  {sidebar}
+  <main class="main-content">
+  <div class="wrap">
   <h1>Upcoming Arrivals</h1>
   <p class="subtitle">Last refreshed: {last_updated} · <a class="back-link" href="/refresh">Refresh now</a></p>
   {error_banner}
@@ -2973,6 +3064,8 @@ MANAGE_TEMPLATE = """<!DOCTYPE html>
   </div>
 
   <p class="footer-note">Showing the next {upcoming_count_label} upcoming bookings. This page has no login — don't share the URL publicly.</p>
+  </div>
+  </main>
 </div>
 </body>
 </html>
@@ -3031,13 +3124,14 @@ CLEANING_TEMPLATE = """<!DOCTYPE html>
   }}
   *{{box-sizing:border-box;}}
   body{{ margin:0; overflow-x:hidden; background: var(--limestone); color: var(--bark);
-    font-family:'Work Sans', sans-serif; padding: 40px 32px 60px; }}
-  .wrap{{ max-width: 900px; margin:0 auto; }}
+    font-family:'Work Sans', sans-serif; }}
+  {sidebar_css}
+  .wrap{{ max-width: 900px; padding: 40px 32px 60px; }}
   h1{{ font-family:'Fraunces', serif; font-weight:500; font-size: 34px;
     color: var(--creek-deep); margin: 0 0 6px; }}
   .subtitle{{ color:#77705C; margin: 0 0 28px; font-size:14px; }}
   @media (max-width: 600px){{
-    body{{ padding: 20px 16px 40px; }}
+    .wrap{{ padding: 20px 16px 40px; }}
     h1{{ font-size: 26px; }}
   }}
   .back-link{{ font-size: 13px; color: var(--creek); text-decoration:none; }}
@@ -3086,8 +3180,10 @@ CLEANING_TEMPLATE = """<!DOCTYPE html>
 </style>
 </head>
 <body>
-<div class="wrap">
-  <a class="back-link" href="/">&larr; Back to welcome screen</a> · <a class="back-link" href="/menu">Menu</a> · <a class="back-link" href="/manage">Manage arrivals</a> · <a class="back-link" href="/pool">Pool control</a> · <a class="back-link" href="/doors">Door codes</a> · <a class="back-link" href="/users">Users</a> · <form method="POST" action="/logout" style="display:inline;margin:0;">{csrf_field}<button type="submit" class="back-link" style="background:none;border:none;cursor:pointer;font:inherit;padding:0;">Log out</button></form>
+<div class="app-shell">
+  {sidebar}
+  <main class="main-content">
+  <div class="wrap">
   <h1>Cleaning Checklist</h1>
   <p class="subtitle">Last refreshed: {last_updated} · <a class="back-link" href="/refresh">Refresh now</a></p>
   {error_banner}
@@ -3095,6 +3191,8 @@ CLEANING_TEMPLATE = """<!DOCTYPE html>
   {cards}
 
   <p class="footer-note">Checklists are per booking and reset automatically once a booking is no longer upcoming. Checking a box saves immediately — no need to submit anything. This page has no login — don't share the URL publicly.</p>
+  </div>
+  </main>
 </div>
 </body>
 </html>
@@ -3171,8 +3269,9 @@ POOL_TEMPLATE = """<!DOCTYPE html>
   }}
   *{{box-sizing:border-box;}}
   body{{ margin:0; overflow-x:hidden; background: var(--limestone); color: var(--bark);
-    font-family:'Work Sans', sans-serif; padding: 20px 20px 30px; font-size: 14px; }}
-  .wrap{{ max-width: 900px; margin:0 auto; }}
+    font-family:'Work Sans', sans-serif; font-size: 14px; }}
+  {sidebar_css}
+  .wrap{{ max-width: 900px; padding: 20px 20px 30px; }}
   h1{{ font-family:'Fraunces', serif; font-weight:500; font-size: 24px;
     color: var(--creek-deep); margin: 8px 0 4px; display:inline-block; }}
   .subtitle{{ color:#77705C; margin: 0 0 16px; font-size:12px; }}
@@ -3285,8 +3384,10 @@ POOL_TEMPLATE = """<!DOCTYPE html>
 </style>
 </head>
 <body>
-<div class="wrap">
-  <a class="back-link" href="/">&larr; Back to welcome screen</a> · <a class="back-link" href="/menu">Menu</a> · <a class="back-link" href="/manage">Manage arrivals</a> · <a class="back-link" href="/cleaning">Cleaning checklist</a> · <a class="back-link" href="/doors">Door codes</a> · <a class="back-link" href="/users">Users</a> · <form method="POST" action="/logout" style="display:inline;margin:0;">{csrf_field}<button type="submit" class="back-link" style="background:none;border:none;cursor:pointer;font:inherit;padding:0;">Log out</button></form>
+<div class="app-shell">
+  {sidebar}
+  <main class="main-content">
+  <div class="wrap">
   <div><h1>{system_name}</h1>{online_badge}</div>
   <p class="subtitle"><a class="back-link" href="/pool">Refresh now</a></p>
   {error_banner}
@@ -3346,6 +3447,8 @@ POOL_TEMPLATE = """<!DOCTYPE html>
   </div>
 
   <p class="footer-note">Pool state is fetched live on every visit to this page — it isn't cached. Schedules run in the background continuously, whether or not this page is open, and are saved to disk so they survive restarts and deploys. This page has no login — don't share the URL publicly.</p>
+  </div>
+  </main>
 </div>
 </body>
 </html>
@@ -3414,13 +3517,14 @@ DOORS_TEMPLATE = """<!DOCTYPE html>
   }}
   *{{box-sizing:border-box;}}
   body{{ margin:0; overflow-x:hidden; background: var(--limestone); color: var(--bark);
-    font-family:'Work Sans', sans-serif; padding: 40px 32px 60px; }}
-  .wrap{{ max-width: 980px; margin:0 auto; }}
+    font-family:'Work Sans', sans-serif; }}
+  {sidebar_css}
+  .wrap{{ max-width: 980px; padding: 40px 32px 60px; }}
   h1{{ font-family:'Fraunces', serif; font-weight:500; font-size: 34px;
     color: var(--creek-deep); margin: 0 0 6px; }}
   .subtitle{{ color:#77705C; margin: 0 0 20px; font-size:14px; }}
   @media (max-width: 600px){{
-    body{{ padding: 20px 16px 40px; }}
+    .wrap{{ padding: 20px 16px 40px; }}
     h1{{ font-size: 26px; }}
   }}
   .back-link{{ font-size: 13px; color: var(--creek); text-decoration:none; }}
@@ -3514,8 +3618,10 @@ DOORS_TEMPLATE = """<!DOCTYPE html>
 </style>
 </head>
 <body>
-<div class="wrap">
-  <a class="back-link" href="/">&larr; Back to welcome screen</a> · <a class="back-link" href="/menu">Menu</a> · <a class="back-link" href="/manage">Manage arrivals</a> · <a class="back-link" href="/cleaning">Cleaning checklist</a> · <a class="back-link" href="/pool">Pool control</a> · <a class="back-link" href="/doors">Door codes</a> · <a class="back-link" href="/users">Users</a> · <form method="POST" action="/logout" style="display:inline;margin:0;">{csrf_field}<button type="submit" class="back-link" style="background:none;border:none;cursor:pointer;font:inherit;padding:0;">Log out</button></form>
+<div class="app-shell">
+  {sidebar}
+  <main class="main-content">
+  <div class="wrap">
   <h1>Door Codes</h1>
   <p class="subtitle">Sends a code (last 4 of the guest's phone) valid only for their stay dates.</p>
   {error_banner}
@@ -3613,6 +3719,8 @@ DOORS_TEMPLATE = """<!DOCTYPE html>
   </div>
 
   <p class="footer-note">"Sent" only reflects codes this app itself has created -- Kwikset's API has no way to read codes back off the physical lock, so this can't detect codes added via the Kwikset app or keypad. Each guest's access window defaults to the setting above but can be changed per guest before sending. "Expired" is based on the code's own valid-until time, not a live check against the lock -- Kwikset's API can't confirm whether an expired code has actually stopped working, only that its scheduled window has passed. This page has no login — don't share the URL publicly, since it can create real door access codes.</p>
+  </div>
+  </main>
 </div>
 </body>
 </html>
