@@ -926,7 +926,7 @@ def ownerrez_create_webhook_subscription(url, category):
         raise RuntimeError("OwnerRez credentials aren't configured.")
     resp = requests.post(
         f"{API_BASE}/webhooksubscriptions",
-        json={"url": url, "category": category},
+        json={"WebhookUrl": url, "category": category},
         auth=(OWNERREZ_USERNAME, OWNERREZ_TOKEN),
         headers=_ownerrez_headers(),
         timeout=15,
