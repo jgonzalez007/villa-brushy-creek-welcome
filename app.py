@@ -148,6 +148,19 @@ KWIKSET_START_SLOT = int(os.environ.get("KWIKSET_START_SLOT", "5"))
 SECRET_KEY = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
 ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "admin")
 
+# Guest messaging. OwnerRez has no endpoint to list open/unread messages --
+# by their own design, the only way to learn about a new guest message is a
+# webhook they push the moment one arrives. So /webhooks/ownerrez receives
+# and stores those events ourselves; /messages reads from that local store.
+# OWNERREZ_WEBHOOK_SECRET is optional but recommended -- without it, anyone
+# who finds the webhook URL could post fake messages into your inbox.
+OWNERREZ_WEBHOOK_SECRET = os.environ.get("OWNERREZ_WEBHOOK_SECRET")
+# Used to build the callback URL when registering the webhook subscription
+# with OwnerRez -- set this to your real Render URL, e.g.
+# https://villa-brushy-creek-welcome.onrender.com
+PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "")
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")  # optional -- AI drafts
+
 # In-memory cache of everything the app needs to serve "/", "/manage",
 # and "/cleaning". RLock (not Lock) because route handlers call
 # _recompute_selected_and_render() while already holding the lock.
@@ -241,6 +254,22 @@ def init_db():
             created_at TEXT,
             updated_at TEXT
         );
+        CREATE TABLE IF NOT EXISTS message_events (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            received_utc TEXT NOT NULL,
+            category     TEXT,
+            action       TEXT,
+            thread_id    TEXT,
+            booking_id   TEXT,
+            guest        TEXT,
+            body         TEXT,
+            is_incoming  INTEGER,
+            handled      INTEGER NOT NULL DEFAULT 0,
+            raw          TEXT,
+            draft_reply  TEXT,
+            sent_at      TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_msg_open ON message_events (handled, category);
     """)
     db.commit()
 
@@ -479,6 +508,134 @@ def db_set_user_password(user_id, password):
 def db_delete_user(user_id):
     db = get_db()
     db.execute("DELETE FROM users WHERE id = ?", (user_id,))
+    db.commit()
+
+
+# ---------------------------------------------------------------------------
+# GUEST MESSAGING -- webhook-driven inbox
+# ---------------------------------------------------------------------------
+# parse_message_event is a direct port of the same function from the
+# author's own ownerrez-mcp-node project (pasted directly, not guessed) --
+# its own docstring is honest that OwnerRez's payload shape isn't 100%
+# pinned down, so this uses the same defensive multi-key fallback approach
+# rather than assuming a single exact schema.
+
+_VALIDATION_KEYS = ("validationToken", "validation_token", "challenge", "validation")
+
+
+def _first(obj, keys):
+    if not isinstance(obj, dict):
+        return None
+    for k in keys:
+        if k in obj and obj[k] not in (None, ""):
+            return obj[k]
+    return None
+
+
+def _extract_validation(mapping):
+    if not isinstance(mapping, dict):
+        return None
+    for k in _VALIDATION_KEYS:
+        if mapping.get(k):
+            return str(mapping[k])
+    return None
+
+
+def parse_message_event(payload):
+    """Best-effort extraction of a message event from an OwnerRez webhook
+    body. Field names vary across payload shapes -- fallbacks are used
+    everywhere, and the raw payload is always kept so nothing is lost."""
+    entity = payload.get("entity") or payload.get("resource") or payload.get("data") or payload
+
+    category = _first(payload, ["category", "type", "resource_type", "event_type"]) or "message"
+    action = _first(payload, ["action", "event", "operation"])
+    thread_id = _first(entity, ["threadId", "thread_id", "conversation_id", "conversationId"])
+    booking_id = _first(entity, ["booking_id", "bookingId", "booking"])
+    body = _first(entity, ["body", "message", "text", "content"])
+
+    guest = None
+    guest_obj = entity.get("guest") if isinstance(entity, dict) else None
+    if isinstance(guest_obj, dict):
+        guest = (
+            " ".join(x for x in [guest_obj.get("first_name"), guest_obj.get("last_name")] if x).strip()
+            or guest_obj.get("name")
+        )
+    guest = guest or _first(entity, ["guest_name", "from", "sender"])
+
+    is_incoming = _first(entity, ["is_incoming", "incoming", "from_guest", "inbound"])
+    direction = _first(entity, ["direction"])
+    if is_incoming is None and isinstance(direction, str):
+        is_incoming = direction.lower() in ("in", "inbound", "incoming", "from_guest")
+
+    return {
+        "category": str(category).lower() if category else None,
+        "action": action,
+        "thread_id": thread_id,
+        "booking_id": booking_id,
+        "guest": guest,
+        "body": body,
+        "is_incoming": is_incoming,
+        "raw": payload,
+    }
+
+
+def db_add_message_event(event):
+    db = get_db()
+    cur = db.execute(
+        """INSERT INTO message_events
+           (received_utc, category, action, thread_id, booking_id, guest,
+            body, is_incoming, raw)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            event.get("category"),
+            event.get("action"),
+            str(event["thread_id"]) if event.get("thread_id") is not None else None,
+            str(event["booking_id"]) if event.get("booking_id") is not None else None,
+            event.get("guest"),
+            event.get("body"),
+            (1 if event.get("is_incoming") else 0) if event.get("is_incoming") is not None else None,
+            json.dumps(event.get("raw"), default=str) if event.get("raw") is not None else None,
+        ),
+    )
+    db.commit()
+    return cur.lastrowid
+
+
+def db_list_open_messages(limit=100):
+    """Unhandled message events (inbound or unknown-direction), newest first."""
+    db = get_db()
+    return db.execute(
+        """SELECT * FROM message_events
+           WHERE handled = 0
+             AND (category = 'message' OR category IS NULL)
+             AND (is_incoming = 1 OR is_incoming IS NULL)
+           ORDER BY id DESC
+           LIMIT ?""",
+        (limit,),
+    ).fetchall()
+
+
+def db_get_message_event(event_id):
+    db = get_db()
+    return db.execute("SELECT * FROM message_events WHERE id = ?", (event_id,)).fetchone()
+
+
+def db_mark_message_handled(event_id, handled=True, sent=False):
+    db = get_db()
+    if sent:
+        db.execute(
+            "UPDATE message_events SET handled = ?, sent_at = ? WHERE id = ?",
+            (1 if handled else 0, datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), event_id),
+        )
+    else:
+        db.execute("UPDATE message_events SET handled = ? WHERE id = ?", (1 if handled else 0, event_id))
+    db.commit()
+
+
+def db_save_message_draft(event_id, draft_text):
+    db = get_db()
+    db.execute("UPDATE message_events SET draft_reply = ? WHERE id = ?", (draft_text, event_id))
     db.commit()
 
 
@@ -733,6 +890,126 @@ def fetch_deposit_status(booking_id):
         if _DEPOSIT_DESCRIPTION_MARKER in description:
             return {"received": True, "amount": p.get("amount"), "description": p.get("description")}
     return {"received": False, "amount": None, "description": None}
+
+
+def _ownerrez_headers():
+    return {
+        "User-Agent": "Villa Brushy Creek Welcome Screen/1.0",
+        "Accept": "application/json",
+    }
+
+
+def ownerrez_create_webhook_subscription(url, category):
+    """POST /v2/webhooksubscriptions -- confirmed directly against the
+    author's own working ownerrez-mcp-node implementation."""
+    if not OWNERREZ_USERNAME or not OWNERREZ_TOKEN:
+        raise RuntimeError("OwnerRez credentials aren't configured.")
+    resp = requests.post(
+        f"{API_BASE}/webhooksubscriptions",
+        json={"url": url, "category": category},
+        auth=(OWNERREZ_USERNAME, OWNERREZ_TOKEN),
+        headers=_ownerrez_headers(),
+        timeout=15,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def ownerrez_list_webhook_subscriptions():
+    if not OWNERREZ_USERNAME or not OWNERREZ_TOKEN:
+        raise RuntimeError("OwnerRez credentials aren't configured.")
+    resp = requests.get(
+        f"{API_BASE}/webhooksubscriptions",
+        auth=(OWNERREZ_USERNAME, OWNERREZ_TOKEN),
+        headers=_ownerrez_headers(),
+        timeout=15,
+    )
+    resp.raise_for_status()
+    payload = resp.json()
+    return payload.get("items") or payload.get("webhooksubscriptions") or payload.get("subscriptions") or []
+
+
+def ownerrez_send_message(thread_id, body):
+    """POST /v2/messages -- confirmed directly against the author's own
+    working ownerrez-mcp-node send_message implementation (threadId +
+    body, no other required fields)."""
+    if not OWNERREZ_USERNAME or not OWNERREZ_TOKEN:
+        raise RuntimeError("OwnerRez credentials aren't configured.")
+    resp = requests.post(
+        f"{API_BASE}/messages",
+        json={"threadId": int(thread_id), "body": body},
+        auth=(OWNERREZ_USERNAME, OWNERREZ_TOKEN),
+        headers=_ownerrez_headers(),
+        timeout=15,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def generate_ai_draft(event):
+    """Calls Anthropic's Messages API directly (same pattern as every
+    other integration in this app: raw `requests`, no SDK dependency).
+    Grounds the draft only in the guest's message and, if resolvable, the
+    real booking dates/property -- never invents specifics like wifi
+    passwords or door codes, leaving a bracketed placeholder instead,
+    matching the same philosophy as this project's original guest-reply
+    design doc."""
+    if not ANTHROPIC_API_KEY:
+        raise RuntimeError(
+            "AI drafting isn't configured yet. Set ANTHROPIC_API_KEY to enable "
+            "AI-suggested replies -- until then, replies can still be typed and "
+            "sent manually."
+        )
+
+    booking_context = ""
+    booking_id = event["booking_id"] if "booking_id" in event.keys() else None
+    if booking_id:
+        with _cache_lock:
+            match = next(
+                (g for g in _cache.get("upcoming", []) if str(g.get("booking_id")) == str(booking_id)),
+                None,
+            )
+        if match:
+            booking_context = (
+                f"Their booking: arriving {match['arrival']}, departing {match['departure']}, "
+                f"at {match['property_name']}.\n"
+            )
+
+    guest_name = event["guest"] if "guest" in event.keys() and event["guest"] else "the guest"
+    incoming_body = event["body"] if "body" in event.keys() and event["body"] else "(no message text)"
+
+    prompt = (
+        f"You are helping a vacation rental host draft a reply to a guest message "
+        f"for {PROPERTY_DISPLAY_NAME}.\n\n"
+        f"Guest: {guest_name}\n"
+        f"{booking_context}"
+        f'Guest\'s message: "{incoming_body}"\n\n'
+        "Write a warm, concise, professional reply (under 100 words). Ground it "
+        "only in the information given above -- never invent specifics like wifi "
+        "passwords, door codes, or directions you don't actually have. If the "
+        "guest is asking for something not provided here, leave a bracketed "
+        "placeholder like [confirm wifi password] for the host to fill in before "
+        "sending. Don't sign off with a name -- just the message body."
+    )
+
+    resp = requests.post(
+        "https://api.anthropic.com/v1/messages",
+        json={
+            "model": "claude-sonnet-4-6",
+            "max_tokens": 400,
+            "messages": [{"role": "user", "content": prompt}],
+        },
+        headers={
+            "x-api-key": ANTHROPIC_API_KEY,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        },
+        timeout=30,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    text_parts = [b.get("text", "") for b in data.get("content", []) if b.get("type") == "text"]
+    return "".join(text_parts).strip()
 
 
 # ---------------------------------------------------------------------------
@@ -1716,6 +1993,7 @@ _SIDEBAR_NAV_ITEMS = [
     ("/cleaning", "Cleaning Checklist"),
     ("/pool", "Pool Control"),
     ("/doors", "Door Codes"),
+    ("/messages", "Messages"),
     ("/users", "Users"),
 ]
 
@@ -1790,11 +2068,18 @@ def render_sidebar(active_path):
 # Paths reachable without being logged in. Exact matches only (not
 # prefixes) -- deliberately narrow so a new route is protected by
 # default unless explicitly added here.
-_PUBLIC_PATHS = {"/login", "/setup"}
+_PUBLIC_PATHS = {"/login", "/setup", "/webhooks/ownerrez"}
 
 
 @app.before_request
 def _require_login():
+    # The webhook receiver must always be reachable -- OwnerRez can and will
+    # POST to it before anyone has even finished /setup, and it isn't a
+    # session/browser request at all, so it's excluded before any of the
+    # login/bootstrap logic below.
+    if request.path == "/webhooks/ownerrez":
+        return None
+
     # Bootstrap: nobody has a password set yet -> only /setup is reachable,
     # and everything else redirects there instead of to a login page that
     # nothing could actually pass.
@@ -1888,6 +2173,55 @@ def login():
     return _no_cache(Response(html, mimetype="text/html"))
 
 
+def _webhook_authorized():
+    """Mirrors the shared-secret check from the original webhook receiver:
+    no secret configured means no check (open), otherwise the header or
+    query param must match exactly."""
+    if not OWNERREZ_WEBHOOK_SECRET:
+        return True
+    supplied = request.headers.get("X-Webhook-Secret") or request.args.get("secret")
+    return supplied == OWNERREZ_WEBHOOK_SECRET
+
+
+@app.route("/webhooks/ownerrez", methods=["GET", "POST"])
+def ownerrez_webhook():
+    if request.method == "GET":
+        # Some providers validate a new subscription with a GET challenge
+        # before ever sending a real event.
+        token = _extract_validation(request.args.to_dict())
+        if token:
+            return Response(token, mimetype="text/plain")
+        with _cache_lock:
+            open_count = len(db_list_open_messages())
+        return {"ok": True, "service": "villa-brushy-creek-webhook", "open_messages": open_count}
+
+    # POST
+    if not _webhook_authorized():
+        return {"ok": False, "error": "unauthorized"}, 401
+
+    try:
+        payload = request.get_json(force=True, silent=True) or {}
+    except Exception:
+        payload = {}
+
+    # Subscription validation handshake -- echo the token, store nothing.
+    token = _extract_validation(payload) or _extract_validation(request.args.to_dict())
+    if token and not any(k in payload for k in ("entity", "resource", "data", "body")):
+        return Response(token, mimetype="text/plain")
+
+    event = parse_message_event(payload if isinstance(payload, dict) else {"raw": payload})
+    try:
+        event_id = db_add_message_event(event)
+    except Exception as e:
+        # Deliberately return a non-2xx here (not swallow-and-200) --
+        # OwnerRez retries failed webhook deliveries automatically, and
+        # losing a real inbound guest message silently would be worse
+        # than a retry.
+        print(f"[{datetime.datetime.now()}] Failed to store webhook message event: {e}", file=sys.stderr)
+        return {"ok": False, "error": "storage failed"}, 500
+    return {"ok": True, "stored_id": event_id, "category": event.get("category")}
+
+
 @app.route("/logout", methods=["POST"])
 def logout():
     session.clear()
@@ -1970,6 +2304,290 @@ MENU_TEMPLATE = """<!DOCTYPE html>
       <div class="menu-card-desc">Add or remove logins, reset passwords.</div>
     </a>
   </div>
+  </div>
+  </main>
+</div>
+</body>
+</html>
+"""
+
+
+@app.route("/messages")
+def messages_page():
+    error = None
+    open_messages = []
+    try:
+        open_messages = db_list_open_messages()
+    except Exception as e:
+        error = str(e)
+
+    ai_configured = bool(ANTHROPIC_API_KEY)
+    webhook_url = f"{PUBLIC_BASE_URL.rstrip('/')}/webhooks/ownerrez" if PUBLIC_BASE_URL else ""
+
+    subs_error = None
+    subscriptions = []
+    if OWNERREZ_USERNAME and OWNERREZ_TOKEN:
+        try:
+            subscriptions = ownerrez_list_webhook_subscriptions()
+        except Exception as e:
+            subs_error = str(e)
+
+    message_subscribed = any(
+        (s.get("category") or "").lower() == "message" for s in subscriptions
+    )
+
+    if not open_messages:
+        cards_html = '<p class="empty-state">No open guest messages right now.</p>'
+    else:
+        cards = []
+        for row in open_messages:
+            draft = row["draft_reply"] or ""
+            ai_error = None
+            if not draft and ai_configured:
+                try:
+                    draft = generate_ai_draft(row)
+                    _db_safe(db_save_message_draft, row["id"], draft)
+                except Exception as e:
+                    ai_error = str(e)
+
+            cards.append(MESSAGE_CARD_TEMPLATE.format(
+                event_id=row["id"],
+                guest=row["guest"] or "Unknown guest",
+                received=row["received_utc"] or "",
+                body=(row["body"] or "").replace("<", "&lt;").replace(">", "&gt;"),
+                draft=draft.replace("<", "&lt;").replace(">", "&gt;"),
+                ai_note=(f'<div class="ai-note">AI draft unavailable: {ai_error}</div>' if ai_error else ""),
+                csrf_field=csrf_field(),
+            ))
+        cards_html = "".join(cards)
+
+    html = MESSAGES_TEMPLATE.format(
+        error_banner=f'<div class="error-banner">{error}</div>' if error else "",
+        cards=cards_html,
+        webhook_url=webhook_url or "Set PUBLIC_BASE_URL to see your real webhook URL here.",
+        subscribed_label="Subscribed" if message_subscribed else "Not subscribed",
+        subscribed_class="status-on" if message_subscribed else "status-off",
+        subs_error_banner=(f'<div class="error-banner">{subs_error}</div>' if subs_error else ""),
+        ai_status_label="Configured" if ai_configured else "Not configured",
+        ai_status_class="status-on" if ai_configured else "status-off",
+        csrf_field=csrf_field(),
+        sidebar=render_sidebar("/messages"),
+        sidebar_css=SIDEBAR_CSS,
+    )
+    return _no_cache(Response(html, mimetype="text/html"))
+
+
+@app.route("/messages/setup_webhook", methods=["POST"])
+def messages_setup_webhook():
+    if not PUBLIC_BASE_URL:
+        return "Set PUBLIC_BASE_URL (your real Render URL) before registering the webhook.", 400
+    url = f"{PUBLIC_BASE_URL.rstrip('/')}/webhooks/ownerrez"
+    try:
+        ownerrez_create_webhook_subscription(url, "message")
+    except Exception as e:
+        return f"Failed to register webhook subscription: {e}", 500
+    return redirect("/messages")
+
+
+@app.route("/messages/regenerate", methods=["POST"])
+def messages_regenerate():
+    event_id = request.form.get("event_id")
+    if not event_id:
+        return "Missing event_id", 400
+    row = db_get_message_event(int(event_id))
+    if row is None:
+        return "Message not found", 404
+    try:
+        draft = generate_ai_draft(row)
+    except Exception as e:
+        return f"Failed to generate draft: {e}", 500
+    _db_safe(db_save_message_draft, int(event_id), draft)
+    return redirect(f"/messages#msg-{event_id}")
+
+
+@app.route("/messages/save_draft", methods=["POST"])
+def messages_save_draft():
+    event_id = request.form.get("event_id")
+    draft_text = request.form.get("draft_text", "")
+    if not event_id:
+        return "Missing event_id", 400
+    db_save_message_draft(int(event_id), draft_text)
+    return redirect(f"/messages#msg-{event_id}")
+
+
+@app.route("/messages/send", methods=["POST"])
+def messages_send():
+    event_id = request.form.get("event_id")
+    reply_text = request.form.get("draft_text", "")
+    if not event_id:
+        return "Missing event_id", 400
+    if not reply_text or not reply_text.strip():
+        return "Reply text can't be empty", 400
+    row = db_get_message_event(int(event_id))
+    if row is None:
+        return "Message not found", 404
+    if not row["thread_id"]:
+        return "This message has no thread_id -- can't send a reply to it.", 400
+
+    try:
+        ownerrez_send_message(row["thread_id"], reply_text)
+    except Exception as e:
+        # Save the edited text as the draft even on failure, so the host
+        # doesn't lose their edit and can just retry.
+        _db_safe(db_save_message_draft, int(event_id), reply_text)
+        return f"Failed to send reply: {e}", 500
+
+    db_mark_message_handled(int(event_id), handled=True, sent=True)
+    return redirect("/messages")
+
+
+@app.route("/messages/skip", methods=["POST"])
+def messages_skip():
+    event_id = request.form.get("event_id")
+    if not event_id:
+        return "Missing event_id", 400
+    db_mark_message_handled(int(event_id), handled=True, sent=False)
+    return redirect("/messages")
+
+
+MESSAGE_CARD_TEMPLATE = """
+  <div class="message-card" id="msg-{event_id}">
+    <div class="message-header">
+      <div class="message-guest">{guest}</div>
+      <div class="message-received">{received}</div>
+    </div>
+    <div class="message-body">{body}</div>
+    {ai_note}
+    <form method="POST" action="/messages/send" class="message-reply-form">
+      {csrf_field}
+      <input type="hidden" name="event_id" value="{event_id}">
+      <textarea name="draft_text" class="message-textarea" rows="4" placeholder="Type or generate a reply...">{draft}</textarea>
+      <div class="message-actions">
+        <button type="submit" class="send-btn">Send reply</button>
+      </div>
+    </form>
+    <div class="message-secondary-actions">
+      <form method="POST" action="/messages/regenerate">
+        {csrf_field}
+        <input type="hidden" name="event_id" value="{event_id}">
+        <button type="submit" class="select-btn">Regenerate AI draft</button>
+      </form>
+      <form method="POST" action="/messages/skip" onsubmit="return confirm('Skip this message without replying?');">
+        {csrf_field}
+        <input type="hidden" name="event_id" value="{event_id}">
+        <button type="submit" class="delete-btn">Skip (no reply)</button>
+      </form>
+    </div>
+  </div>
+"""
+
+MESSAGES_TEMPLATE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Messages — Villa Brushy Creek</title>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{{ --creek: #1F3F3D; --creek-deep: #142B29; --limestone: #EFEAD9; --sage: #7C8B65; --clay: #C1652F; --bark: #2A2018; }}
+  *{{box-sizing:border-box;}}
+  body{{ margin:0; overflow-x:hidden; background: var(--limestone); color: var(--bark);
+    font-family:'Work Sans', sans-serif; }}
+  {sidebar_css}
+  .wrap{{ max-width: 780px; padding: 40px 32px 60px; }}
+  h1{{ font-family:'Fraunces', serif; font-weight:500; font-size: 34px; color: var(--creek-deep); margin: 0 0 20px; }}
+  h2.section-title{{ font-family:'Fraunces', serif; font-weight:500; font-size: 18px; color: var(--creek-deep); margin: 32px 0 12px; }}
+  @media (max-width: 600px){{
+    .wrap{{ padding: 20px 16px 40px; }}
+    h1{{ font-size: 26px; }}
+  }}
+  .error-banner{{
+    background:#FBEAE0; border:1px solid #E8B99B; color:#8A3D14;
+    padding:12px 16px; border-radius:10px; margin-bottom:20px; font-size:14px;
+  }}
+  .empty-state{{ text-align:center; color:#9A9276; padding: 30px; }}
+  .status-badge{{ display:inline-block; font-size: 11px; font-weight:600; padding: 2px 9px; border-radius: 100px; }}
+  .status-on{{ background: var(--sage); color:#fff; }}
+  .status-off{{ background:#DCD4B8; color:#5C5443; }}
+  .setup-card{{
+    background:#fff; border:1px solid #E2DBC5; border-radius:14px; padding: 16px 20px; margin-bottom: 12px;
+  }}
+  .setup-row{{ display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom: 8px; }}
+  .setup-row:last-child{{ margin-bottom: 0; }}
+  .setup-label{{ font-size: 13px; color:#5C5443; }}
+  .setup-url{{ font-size: 12px; color:#8A7F63; word-break:break-all; }}
+  .setup-btn{{
+    font-family:'Work Sans', sans-serif; font-size: 12px; font-weight:500; padding: 7px 14px;
+    border-radius: 100px; border:1px solid var(--creek); background: var(--creek); color:#fff; cursor:pointer;
+  }}
+  .setup-btn:hover{{ background: var(--creek-deep); }}
+  .message-card{{
+    background:#fff; border:1px solid #E2DBC5; border-radius:16px; padding: 20px 22px; margin-bottom: 18px;
+  }}
+  .message-header{{ display:flex; justify-content:space-between; align-items:baseline; gap:12px; flex-wrap:wrap; margin-bottom: 10px; }}
+  .message-guest{{ font-family:'Fraunces', serif; font-weight:500; font-size: 17px; color: var(--creek-deep); }}
+  .message-received{{ font-size: 12px; color:#9A9276; }}
+  .message-body{{
+    background:#F6F1E1; border-radius:10px; padding: 12px 14px; font-size: 14px; color:#5C5443;
+    margin-bottom: 12px; white-space:pre-wrap;
+  }}
+  .ai-note{{ font-size: 12px; color:#8A3D14; margin-bottom: 10px; }}
+  .message-textarea{{
+    width:100%; font-family:'Work Sans', sans-serif; font-size: 14px; padding: 10px 12px;
+    border-radius: 9px; border:1px solid #DCD4B8; resize:vertical; margin-bottom: 10px;
+  }}
+  .message-actions{{ display:flex; justify-content:flex-end; }}
+  .send-btn{{
+    font-family:'Work Sans', sans-serif; font-size: 13px; font-weight:500; padding: 9px 20px;
+    border-radius: 100px; border:1px solid var(--creek); background: var(--creek); color:#fff; cursor:pointer;
+  }}
+  .send-btn:hover{{ background: var(--creek-deep); }}
+  .message-secondary-actions{{ display:flex; gap:10px; margin-top: 10px; flex-wrap:wrap; }}
+  .message-secondary-actions form{{ margin:0; }}
+  .select-btn{{
+    font-family:'Work Sans', sans-serif; font-size: 12px; font-weight:500; padding: 7px 14px;
+    border-radius: 100px; border:1px solid var(--clay); background:#fff; color: var(--clay); cursor:pointer;
+  }}
+  .select-btn:hover{{ background: var(--clay); color:#fff; }}
+  .delete-btn{{
+    font-family:'Work Sans', sans-serif; font-size: 12px; color:#8A7F63; background:none;
+    border:1px solid #DCD4B8; border-radius:100px; padding: 7px 14px; cursor:pointer;
+  }}
+  .delete-btn:hover{{ border-color: var(--clay); color: var(--clay); }}
+  .footer-note{{ margin-top: 24px; font-size: 12px; color:#9A9276; }}
+</style>
+</head>
+<body>
+<div class="app-shell">
+  {sidebar}
+  <main class="main-content">
+  <div class="wrap">
+  <h1>Messages</h1>
+  {error_banner}
+
+  <div class="setup-card">
+    <div class="setup-row">
+      <span class="setup-label">Webhook subscription</span>
+      <span class="status-badge {subscribed_class}">{subscribed_label}</span>
+    </div>
+    <div class="setup-row">
+      <span class="setup-url">{webhook_url}</span>
+      <form method="POST" action="/messages/setup_webhook">
+        {csrf_field}
+        <button type="submit" class="setup-btn">Register webhook</button>
+      </form>
+    </div>
+    {subs_error_banner}
+    <div class="setup-row">
+      <span class="setup-label">AI drafting</span>
+      <span class="status-badge {ai_status_class}">{ai_status_label}</span>
+    </div>
+  </div>
+
+  <h2 class="section-title">Open messages</h2>
+  {cards}
+
+  <p class="footer-note">Nothing here is ever sent automatically -- every reply is generated only as a suggestion, and only sends when you click "Send reply" yourself, with whatever text is actually in the box at that moment. This page has no separate permission tier -- don't share the URL publicly.</p>
   </div>
   </main>
 </div>

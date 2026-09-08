@@ -41,6 +41,12 @@ services:
         sync: false        # required for persistent sessions -- see README "Securing this site" section
       - key: ADMIN_USERNAME
         value: admin        # optional -- change the bootstrap admin's username before first deploy
+      - key: PUBLIC_BASE_URL
+        sync: false        # your real Render URL, e.g. https://villa-brushy-creek-welcome.onrender.com -- needed to register the message webhook
+      - key: OWNERREZ_WEBHOOK_SECRET
+        sync: false        # optional but recommended -- protects the public webhook URL from spoofed requests
+      - key: ANTHROPIC_API_KEY
+        sync: false        # optional -- omit to leave /messages showing "AI drafting: Not configured" (manual replies still work)
     disks:
       - name: villa-brushy-creek-data
         mountPath: /var/data

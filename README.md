@@ -173,6 +173,87 @@ yourself out entirely.
 These are reasonable gaps for a small personal/family-run tool with a
 handful of trusted users, but worth knowing about.
 
+## Guest messages (AI-assisted, human-approved)
+
+`/messages` shows guest messages that have come in via OwnerRez, with an
+optional AI-suggested reply -- but **nothing is ever sent automatically**.
+Every reply requires you to click "Send reply" yourself, and whatever
+text is actually in the box at that moment is exactly what gets sent
+-- if you edit the AI's suggestion first, your edit is what goes out.
+
+### Why this needs a webhook (not just a live fetch like every other page)
+
+OwnerRez's API has **no endpoint to list open/unread messages** --
+confirmed directly from their own developer docs, this was a
+deliberate design choice on their part. The only way to learn about a
+new guest message is a webhook they push to you the moment one
+arrives. So unlike `/pool` or `/doors`, which fetch live data on every
+page load, `/messages` reads from a small local database that's
+populated by `/webhooks/ownerrez` -- a public endpoint OwnerRez POSTs
+to whenever a message comes in.
+
+### One-time setup
+
+1. Set `PUBLIC_BASE_URL` in Render's Environment tab to your real
+   deployed URL, e.g. `https://villa-brushy-creek-welcome.onrender.com`
+   (no trailing slash).
+2. Optionally set `OWNERREZ_WEBHOOK_SECRET` to a random string first --
+   without one, anyone who discovers the webhook URL could post fake
+   messages into your inbox. Generate one the same way as `SECRET_KEY`:
+   ```bash
+   python3 -c "import secrets; print(secrets.token_hex(32))"
+   ```
+3. Visit `/messages` and click **Register webhook** under "Webhook
+   subscription" -- this calls OwnerRez's API to start sending message
+   events to your app. The status badge should flip to "Subscribed."
+4. Send yourself a test message as a guest (OwnerRez has a Sandbox
+   messaging feature for exactly this) and confirm it shows up on
+   `/messages`.
+
+### AI-suggested drafts
+
+Set `ANTHROPIC_API_KEY` to enable AI-generated draft replies. Without
+it, `/messages` still works fully -- you just type replies manually
+instead of starting from a suggestion. When configured, a draft is
+generated automatically the first time a message is viewed (and only
+then -- reloading the page won't silently regenerate or discard an
+existing draft, including one you've edited). Click "Regenerate AI
+draft" to explicitly ask for a fresh one instead.
+
+The AI is only given the guest's message text and, if the message can
+be matched to a known upcoming booking, the real arrival/departure
+dates and property name -- it's instructed to never invent specifics
+like wifi passwords or door codes, and to leave a bracketed placeholder
+like `[confirm wifi password]` instead, for you to fill in before
+sending.
+
+### How this was built
+
+The webhook receiver, message storage, and the underlying
+`create_webhook_subscription`/`send_message` API calls are a direct
+port of this project's own `ownerrez-mcp-node` server (the same one
+used elsewhere via Claude Desktop) -- not guessed at. That project's
+own code is upfront that OwnerRez's exact webhook payload shape isn't
+100% pinned down across all message types, so the parsing here uses
+the same defensive, multi-key-fallback approach rather than assuming
+one exact schema. If a real payload ever doesn't parse as expected,
+the raw payload is always kept in the database (`raw` column) so
+nothing is silently lost, even if a field comes through named
+differently than expected.
+
+### Known limitations
+
+- **No way to mark a thread "handled" on OwnerRez's side** -- this
+  only exists as local bookkeeping in this app's own database
+  (matches the original `ownerrez-mcp-node` design; no such OwnerRez
+  API endpoint exists as far as either project has found).
+- **A skipped or already-answered message could reappear** if OwnerRez
+  ever resends the same webhook event (e.g. after a delivery retry) --
+  it would show up as a "new" open message locally, since there's no
+  cross-check against OwnerRez's own thread status.
+- This page has no separate permission tier from the rest of the
+  site -- don't share the URL publicly.
+
 ## Door codes
 
 `/doors` sends Kwikset keypad access codes to guests -- pick a lock,
