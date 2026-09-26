@@ -8,17 +8,17 @@
 <link rel="stylesheet" href="/static/app.css?v=1">
 <style>
   body{ margin:0; min-height:100vh; overflow-x:hidden; display:flex; align-items:center; justify-content:center;
-    background: linear-gradient(180deg, var(--creek) 0%, var(--creek-deep) 100%);
+    background: linear-gradient(180deg, var(--fill-from) 0%, var(--fill-to) 100%);
     font-family:'Work Sans', sans-serif; padding: 20px; }
-  .card{ background:#fff; border-radius:18px; padding:36px 32px; max-width:340px; width:100%; }
-  h1{ font-family:'Fraunces', serif; font-weight:500; font-size:24px; color: var(--creek-deep); margin:0 0 24px; }
-  label{ font-size:12px; text-transform:uppercase; letter-spacing:0.06em; color:#8A7F63; display:block; margin-bottom:6px; }
+  .card{ background: var(--surface); border-radius:18px; padding:36px 32px; max-width:340px; width:100%; }
+  h1{ font-family:'Fraunces', serif; font-weight:500; font-size:24px; color: var(--text); margin:0 0 24px; }
+  label{ font-size:12px; text-transform:uppercase; letter-spacing:0.06em; color: var(--text-faint); display:block; margin-bottom:6px; }
   input{ width:100%; font-family:'Work Sans', sans-serif; font-size:15px; padding:10px 12px;
-    border-radius:9px; border:1px solid #DCD4B8; margin-bottom:16px; }
+    border-radius:9px; border:1px solid var(--border); margin-bottom:16px; }
   button{ width:100%; font-family:'Work Sans', sans-serif; font-size:14px; font-weight:500;
-    padding:11px; border-radius:100px; border:none; background: var(--creek); color:#fff; cursor:pointer; }
-  button:hover{ background: var(--creek-deep); }
-  .error-banner{ background:#FBEAE0; border:1px solid #E8B99B; color:#8A3D14; padding:10px 14px;
+    padding:11px; border-radius:100px; border:none; background: var(--accent); color: var(--on-accent); cursor:pointer; }
+  button:hover{ background: var(--accent-hover); }
+  .error-banner{ background: var(--danger-bg); border:1px solid var(--danger-border); color: var(--danger-text); padding:10px 14px;
     border-radius:10px; margin-bottom:18px; font-size:13px; }
 </style>
 </head>

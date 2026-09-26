@@ -9,36 +9,36 @@
 <style>
   .wrap{ max-width: 980px; }
   h1{ font-family:'Fraunces', serif; font-weight:500; font-size: 34px;
-    color: var(--creek-deep); margin: 0 0 6px; }
-  .subtitle{ color:#77705C; margin: 0 0 28px; font-size:14px; }
+    color: var(--text); margin: 0 0 6px; }
+  .subtitle{ color: var(--text-dim); margin: 0 0 28px; font-size:14px; }
   .mode-toggle{ display:flex; gap:10px; margin: 20px 0 28px; }
   .mode-toggle form{ margin:0; }
   .mode-btn{
     font-family:'Work Sans', sans-serif; font-size:14px; font-weight:500;
-    padding: 10px 20px; border-radius: 100px; border:1px solid #DCD4B8;
-    background:#fff; color: var(--bark); cursor:pointer;
+    padding: 10px 20px; border-radius: 100px; border:1px solid var(--border);
+    background: var(--surface); color: var(--text); cursor:pointer;
   }
   .mode-btn.mode-active{
-    background: var(--creek); color: var(--limestone); border-color: var(--creek);
+    background: var(--accent); color: var(--text); border-color: var(--accent);
   }
-  .mode-explainer{ font-size: 13px; color:#77705C; margin-bottom: 28px; }
-  table{ width:100%; border-collapse: collapse; background:#fff;
-    border-radius: 14px; overflow:hidden; border:1px solid #E2DBC5; }
+  .mode-explainer{ font-size: 13px; color: var(--text-dim); margin-bottom: 28px; }
+  table{ width:100%; border-collapse: collapse; background: var(--surface);
+    border-radius: 14px; overflow:hidden; border:1px solid var(--border); }
   .table-scroll{ overflow-x:auto; -webkit-overflow-scrolling:touch; }
   .table-scroll table{ min-width: 640px; }
   th{
     text-align:left; font-size: 11px; text-transform:uppercase; letter-spacing:0.08em;
-    color:#8A7F63; padding: 14px 16px; border-bottom: 1px solid #E2DBC5; background:#FAF6E9;
+    color: var(--text-faint); padding: 14px 16px; border-bottom: 1px solid var(--border); background: var(--surface-2);
   }
-  .conf{ color:#9A9276; font-size:12px; }
-  .manage-row-selected{ background: #F3F0DD; }
+  .conf{ color: var(--text-faint); font-size:12px; }
+  .manage-row-selected{ background: var(--surface-2); }
   .select-btn{
     font-family:'Work Sans', sans-serif; font-size: 13px; font-weight:500;
     padding: 8px 14px; border-radius: 100px; border:1px solid var(--clay);
-    background:#fff; color: var(--clay); cursor:pointer; white-space:nowrap;
+    background: var(--surface); color: var(--clay); cursor:pointer; white-space:nowrap;
   }
   .select-btn[disabled]{
-    border-color:#DCD4B8; color:#9A9276; cursor:default; background:#F3F0DD;
+    border-color: var(--border); color: var(--text-faint); cursor:default; background: var(--surface-2);
   }
 </style>
 </head>

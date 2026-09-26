@@ -8,24 +8,24 @@
 <link rel="stylesheet" href="/static/app.css?v=1">
 <style>
   h1{ margin: 0 0 20px; }
-  table{ width:100%; border-collapse: collapse; background:#fff; border-radius: 14px; overflow:hidden; border:1px solid #E2DBC5; margin-bottom: 0; }
+  table{ width:100%; border-collapse: collapse; background: var(--surface); border-radius: 14px; overflow:hidden; border:1px solid var(--border); margin-bottom: 0; }
   .table-scroll{ overflow-x:auto; -webkit-overflow-scrolling:touch; margin-bottom: 28px; }
   .table-scroll table{ min-width: 560px; }
   .row-send-form{ display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin:0; }
   .row-time-select{ font-family:'Work Sans', sans-serif; font-size: 12px; padding: 6px 8px;
-    border-radius: 7px; border:1px solid #DCD4B8; }
+    border-radius: 7px; border:1px solid var(--border); }
   .select-btn{ font-family:'Work Sans', sans-serif; font-size: 13px; font-weight:500; padding: 8px 14px;
-    border-radius: 100px; border:1px solid var(--clay); background:#fff; color: var(--clay); cursor:pointer; white-space:nowrap; }
-  .delete-btn{ font-family:'Work Sans', sans-serif; font-size: 12px; color:#8A7F63; background:none;
-    border:1px solid #DCD4B8; border-radius:100px; padding: 6px 14px; cursor:pointer; }
+    border-radius: 100px; border:1px solid var(--clay); background: var(--surface); color: var(--clay); cursor:pointer; white-space:nowrap; }
+  .delete-btn{ font-family:'Work Sans', sans-serif; font-size: 12px; color: var(--text-faint); background:none;
+    border:1px solid var(--border); border-radius:100px; padding: 6px 14px; cursor:pointer; }
   .delete-btn[disabled]{ opacity:0.4; cursor:default; }
-  .add-user-card{ background:#fff; border:1px solid #E2DBC5; border-radius:14px; padding: 18px 20px; }
+  .add-user-card{ background: var(--surface); border:1px solid var(--border); border-radius:14px; padding: 18px 20px; }
   .add-user-form{ display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end; }
   .form-field input{ font-family:'Work Sans', sans-serif; font-size: 13px; padding: 8px 10px;
-    border-radius: 7px; border:1px solid #DCD4B8; }
+    border-radius: 7px; border:1px solid var(--border); }
   .add-user-btn{ font-family:'Work Sans', sans-serif; font-size: 13px; font-weight:500; padding: 9px 18px;
-    border-radius: 100px; border:1px solid var(--creek); background: var(--creek); color:#fff; cursor:pointer; }
-  .add-user-btn:hover{ background: var(--creek-deep); }
+    border-radius: 100px; border:1px solid var(--accent); background: var(--accent); color: var(--on-accent); cursor:pointer; }
+  .add-user-btn:hover{ background: var(--accent-hover); }
 </style>
 </head>
 <body>

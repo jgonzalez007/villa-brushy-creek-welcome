@@ -9,23 +9,23 @@
 <style>
   .wrap{ max-width: 980px; }
   h1{ font-family:'Fraunces', serif; font-weight:500; font-size: 34px;
-    color: var(--creek-deep); margin: 0 0 6px; }
-  .subtitle{ color:#77705C; margin: 0 0 20px; font-size:14px; }
+    color: var(--text); margin: 0 0 6px; }
+  .subtitle{ color: var(--text-dim); margin: 0 0 20px; font-size:14px; }
   .controls{ display:flex; gap:14px; margin: 20px 0 24px; flex-wrap:wrap; align-items:center; }
   .controls form{ margin:0; display:flex; gap:14px; align-items:center; flex-wrap:wrap; }
   .controls select{
     font-family:'Work Sans', sans-serif; font-size: 14px;
-    padding: 9px 12px; border-radius: 9px; border:1px solid #DCD4B8; background:#fff;
+    padding: 9px 12px; border-radius: 9px; border:1px solid var(--border); background: var(--surface);
   }
-  .controls-label{ font-size: 12px; color:#8A7F63; margin-right: -6px; }
-  .time-arrow{ color:#9A9276; font-size: 13px; }
-  table{ width:100%; border-collapse: collapse; background:#fff;
-    border-radius: 14px; overflow:hidden; border:1px solid #E2DBC5; }
+  .controls-label{ font-size: 12px; color: var(--text-faint); margin-right: -6px; }
+  .time-arrow{ color: var(--text-faint); font-size: 13px; }
+  table{ width:100%; border-collapse: collapse; background: var(--surface);
+    border-radius: 14px; overflow:hidden; border:1px solid var(--border); }
   .table-scroll{ overflow-x:auto; -webkit-overflow-scrolling:touch; margin-bottom: 20px; }
   .table-scroll table{ min-width: 900px; }
   th{
     text-align:left; font-size: 11px; text-transform:uppercase; letter-spacing:0.08em;
-    color:#8A7F63; padding: 14px 16px; border-bottom: 1px solid #E2DBC5; background:#FAF6E9;
+    color: var(--text-faint); padding: 14px 16px; border-bottom: 1px solid var(--border); background: var(--surface-2);
   }
   .status-badge{
     display:inline-block; font-size: 11px; font-weight:600; padding: 2px 9px;
@@ -34,41 +34,41 @@
   .row-send-form{ display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin:0; }
   .row-time-select{
     font-family:'Work Sans', sans-serif; font-size: 12px;
-    padding: 6px 8px; border-radius: 7px; border:1px solid #DCD4B8; background:#fff;
+    padding: 6px 8px; border-radius: 7px; border:1px solid var(--border); background: var(--surface);
   }
   .select-btn{
     font-family:'Work Sans', sans-serif; font-size: 13px; font-weight:500;
     padding: 8px 14px; border-radius: 100px; border:1px solid var(--clay);
-    background:#fff; color: var(--clay); cursor:pointer; white-space:nowrap;
+    background: var(--surface); color: var(--clay); cursor:pointer; white-space:nowrap;
   }
   .select-btn[disabled]{
-    border-color:#DCD4B8; color:#9A9276; cursor:default; background:#F3F0DD;
+    border-color: var(--border); color: var(--text-faint); cursor:default; background: var(--surface-2);
   }
   .delete-btn{
-    font-family:'Work Sans', sans-serif; font-size: 12px; color:#8A7F63;
-    background:none; border:1px solid #DCD4B8; border-radius:100px;
+    font-family:'Work Sans', sans-serif; font-size: 12px; color: var(--text-faint);
+    background:none; border:1px solid var(--border); border-radius:100px;
     padding: 6px 14px; cursor:pointer;
   }
   .expired-row{ opacity: 0.6; }
   .section-title{
     font-family:'Fraunces', serif; font-weight:500; font-size: 20px;
-    color: var(--creek-deep); margin: 36px 0 14px;
+    color: var(--text); margin: 36px 0 14px;
   }
   .manual-code-card{
-    background:#fff; border:1px solid #E2DBC5; border-radius:14px;
+    background: var(--surface); border:1px solid var(--border); border-radius:14px;
     padding: 18px 20px; margin-top: 8px;
   }
   .manual-code-title{
-    font-family:'Fraunces', serif; font-weight:500; font-size: 17px; color: var(--creek-deep); margin-bottom: 4px;
+    font-family:'Fraunces', serif; font-weight:500; font-size: 17px; color: var(--text); margin-bottom: 4px;
   }
-  .manual-code-hint{ font-size: 13px; color:#77705C; margin: 0 0 16px; }
+  .manual-code-hint{ font-size: 13px; color: var(--text-dim); margin: 0 0 16px; }
   .manual-code-form{ display:flex; flex-wrap:wrap; gap: 14px; align-items:flex-end; }
   .form-field select, .form-field input[type=text], .form-field input[type=date], .form-field input[type=time]{
     font-family:'Work Sans', sans-serif; font-size: 13px;
-    padding: 8px 10px; border-radius: 7px; border:1px solid #DCD4B8;
+    padding: 8px 10px; border-radius: 7px; border:1px solid var(--border);
   }
   .checkbox-label{
-    display:flex; align-items:center; gap:8px; font-size: 13px; color: var(--bark);
+    display:flex; align-items:center; gap:8px; font-size: 13px; color: var(--text);
     text-transform:none; letter-spacing:normal; cursor:pointer; padding-bottom: 8px;
   }
   .checkbox-label input{ width:16px; height:16px; accent-color: var(--sage); }
@@ -78,10 +78,10 @@
   .manual-date-range input[type=time]{ width: 90px; }
   .add-schedule-btn{
     font-family:'Work Sans', sans-serif; font-size: 12px; font-weight:500;
-    padding: 9px 18px; border-radius: 100px; border:1px solid var(--creek);
-    background: var(--creek); color:#fff; cursor:pointer;
+    padding: 9px 18px; border-radius: 100px; border:1px solid var(--accent);
+    background: var(--accent); color: var(--on-accent); cursor:pointer;
   }
-  .add-schedule-btn:hover{ background: var(--creek-deep); }
+  .add-schedule-btn:hover{ background: var(--accent-hover); }
 </style>
 </head>
 <body>
