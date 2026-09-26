@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="theme-warm">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -168,12 +168,7 @@
     width: 100px;
     height: 100px;
     border-radius: 8px;
-    /* The QR image carries its own white quiet zone and must stay dark
-       modules on light to scan reliably, so the tile is white on purpose
-       rather than themed. Padding keeps the quiet zone intact. */
-    background: #FFFFFF;
-    padding: 6px;
-    border: none;
+    border: 1px solid var(--border);
   }
   .wifi-label{
     font-size: 11px;
