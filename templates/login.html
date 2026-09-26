@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Log in — Villa Brushy Creek</title>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/app.css?v=1">
+<style>
+  body{ margin:0; min-height:100vh; overflow-x:hidden; display:flex; align-items:center; justify-content:center;
+    background: linear-gradient(180deg, var(--creek) 0%, var(--creek-deep) 100%);
+    font-family:'Work Sans', sans-serif; padding: 20px; }
+  .card{ background:#fff; border-radius:18px; padding:36px 32px; max-width:340px; width:100%; }
+  h1{ font-family:'Fraunces', serif; font-weight:500; font-size:24px; color: var(--creek-deep); margin:0 0 24px; }
+  label{ font-size:12px; text-transform:uppercase; letter-spacing:0.06em; color:#8A7F63; display:block; margin-bottom:6px; }
+  input{ width:100%; font-family:'Work Sans', sans-serif; font-size:15px; padding:10px 12px;
+    border-radius:9px; border:1px solid #DCD4B8; margin-bottom:16px; }
+  button{ width:100%; font-family:'Work Sans', sans-serif; font-size:14px; font-weight:500;
+    padding:11px; border-radius:100px; border:none; background: var(--creek); color:#fff; cursor:pointer; }
+  button:hover{ background: var(--creek-deep); }
+  .error-banner{ background:#FBEAE0; border:1px solid #E8B99B; color:#8A3D14; padding:10px 14px;
+    border-radius:10px; margin-bottom:18px; font-size:13px; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Villa Brushy Creek</h1>
+  {{ error_banner }}
+  <form method="POST">
+    <input type="hidden" name="next" value="{{ next_path }}">
+    <label>Username</label>
+    <input type="text" name="username" required autofocus>
+    <label>Password</label>
+    <input type="password" name="password" required>
+    <button type="submit">Log in</button>
+  </form>
+</div>
+</body>
+</html>

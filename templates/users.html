@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Users — Villa Brushy Creek</title>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/app.css?v=1">
+<style>
+  h1{ margin: 0 0 20px; }
+  table{ width:100%; border-collapse: collapse; background:#fff; border-radius: 14px; overflow:hidden; border:1px solid #E2DBC5; margin-bottom: 0; }
+  .table-scroll{ overflow-x:auto; -webkit-overflow-scrolling:touch; margin-bottom: 28px; }
+  .table-scroll table{ min-width: 560px; }
+  .row-send-form{ display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin:0; }
+  .row-time-select{ font-family:'Work Sans', sans-serif; font-size: 12px; padding: 6px 8px;
+    border-radius: 7px; border:1px solid #DCD4B8; }
+  .select-btn{ font-family:'Work Sans', sans-serif; font-size: 13px; font-weight:500; padding: 8px 14px;
+    border-radius: 100px; border:1px solid var(--clay); background:#fff; color: var(--clay); cursor:pointer; white-space:nowrap; }
+  .delete-btn{ font-family:'Work Sans', sans-serif; font-size: 12px; color:#8A7F63; background:none;
+    border:1px solid #DCD4B8; border-radius:100px; padding: 6px 14px; cursor:pointer; }
+  .delete-btn[disabled]{ opacity:0.4; cursor:default; }
+  .add-user-card{ background:#fff; border:1px solid #E2DBC5; border-radius:14px; padding: 18px 20px; }
+  .add-user-form{ display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end; }
+  .form-field input{ font-family:'Work Sans', sans-serif; font-size: 13px; padding: 8px 10px;
+    border-radius: 7px; border:1px solid #DCD4B8; }
+  .add-user-btn{ font-family:'Work Sans', sans-serif; font-size: 13px; font-weight:500; padding: 9px 18px;
+    border-radius: 100px; border:1px solid var(--creek); background: var(--creek); color:#fff; cursor:pointer; }
+  .add-user-btn:hover{ background: var(--creek-deep); }
+</style>
+</head>
+<body>
+<div class="app-shell">
+  {{ sidebar }}
+  <main class="main-content">
+  <div class="wrap">
+  <h1>Users</h1>
+
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th>Username</th><th>Status</th><th></th><th></th></tr></thead>
+    <tbody>
+      {{ rows }}
+    </tbody>
+  </table>
+  </div>
+
+  <div class="add-user-card">
+    <form method="POST" action="/users/add" class="add-user-form">
+      {{ csrf_field }}
+      <div class="form-field"><label>Username</label><input type="text" name="username" required></div>
+      <div class="form-field"><label>Password</label><input type="password" name="password" required></div>
+      <button type="submit" class="add-user-btn">Add user</button>
+    </form>
+  </div>
+
+  <p class="footer-note">Anyone with a login here can reach every page on this site, including pool control and sending door codes -- there's no separate permission tiers yet. Keep this list to people you'd hand a physical key to.</p>
+  </div>
+  </main>
+</div>
+</body>
+</html>

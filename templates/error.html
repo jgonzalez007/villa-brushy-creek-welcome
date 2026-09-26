@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Welcome screen — error</title>
+<link rel="stylesheet" href="/static/app.css?v=1">
+<meta http-equiv="refresh" content="300">
+<style>
+body{font-family:sans-serif;background:#F6F1E1;color:#2A2018;padding:60px;}
+h1{color:#C1652F;}
+</style></head>
+<body>
+<h1>Couldn't refresh from OwnerRez</h1>
+<p>{{ error }}</p>
+<p>Last successful update: {{ last_updated }}</p>
+<p>This page will retry automatically.</p>
+<script>
+  setTimeout(function() {
+    window.location.href = window.location.pathname + "?_=" + Date.now();
+  }, 300000); // 5 minutes, matching the meta refresh above
+</script>
+</body></html>

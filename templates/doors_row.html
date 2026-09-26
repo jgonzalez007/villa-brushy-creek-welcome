@@ -1,0 +1,27 @@
+
+      <tr>
+        <td class="guest-name">{{ first_name }} {{ last_name }}</td>
+        <td>{{ arrival_str }}</td>
+        <td>{{ departure_str }}</td>
+        <td>{{ last4 }}</td>
+        <td><span class="status-badge {{ deposit_class }}">{{ deposit_label }}</span></td>
+        <td><span class="status-badge {{ agreement_class }}">{{ agreement_label }}</span></td>
+        <td><span class="status-badge {{ status_class }}">{{ status_label }}</span></td>
+        <td>
+          <form method="POST" action="/doors/send" class="row-send-form">
+            {{ csrf_field }}
+            <input type="hidden" name="device_id" value="{{ selected_device_id_for_row }}">
+            <input type="hidden" name="booking_key" value="{{ booking_key }}">
+            <input type="hidden" name="year" value="{{ year_for_row }}">
+            <input type="hidden" name="month" value="{{ month_for_row }}">
+            <select name="check_in_time" class="row-time-select" {{ send_disabled }}>
+              {{ checkin_options }}
+            </select>
+            <span class="time-arrow">&rarr;</span>
+            <select name="check_out_time" class="row-time-select" {{ send_disabled }}>
+              {{ checkout_options }}
+            </select>
+            <button type="submit" class="select-btn" {{ send_disabled }}>{{ send_label }}</button>
+          </form>
+        </td>
+      </tr>

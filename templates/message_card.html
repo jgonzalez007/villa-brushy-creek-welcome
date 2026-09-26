@@ -1,0 +1,29 @@
+
+  <div class="message-card" id="msg-{{ event_id }}">
+    <div class="message-header">
+      <div class="message-guest">{{ guest }}</div>
+      <div class="message-received">{{ received }}</div>
+    </div>
+    <div class="message-body">{{ body }}</div>
+    {{ ai_note }}
+    <form method="POST" action="/messages/send" class="message-reply-form">
+      {{ csrf_field }}
+      <input type="hidden" name="event_id" value="{{ event_id }}">
+      <textarea name="draft_text" class="message-textarea" rows="4" placeholder="Type or generate a reply...">{{ draft }}</textarea>
+      <div class="message-actions">
+        <button type="submit" class="send-btn">Send reply</button>
+      </div>
+    </form>
+    <div class="message-secondary-actions">
+      <form method="POST" action="/messages/regenerate">
+        {{ csrf_field }}
+        <input type="hidden" name="event_id" value="{{ event_id }}">
+        <button type="submit" class="select-btn">Regenerate AI draft</button>
+      </form>
+      <form method="POST" action="/messages/skip" onsubmit="return confirm('Skip this message without replying?');">
+        {{ csrf_field }}
+        <input type="hidden" name="event_id" value="{{ event_id }}">
+        <button type="submit" class="delete-btn">Skip (no reply)</button>
+      </form>
+    </div>
+  </div>

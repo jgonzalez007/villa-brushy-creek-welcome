@@ -1,0 +1,12 @@
+
+        <li class="task-row {{ done_class }}">
+          <form method="POST" action="/cleaning/toggle">
+            {{ csrf_field }}
+            <input type="hidden" name="booking_key" value="{{ booking_key }}">
+            <input type="hidden" name="task_name" value="{{ task_name }}">
+            <label class="task-label">
+              <input type="checkbox" {{ checked }} onchange="this.form.submit()">
+              <span>{{ task_name }}</span>
+            </label>
+          </form>
+        </li>

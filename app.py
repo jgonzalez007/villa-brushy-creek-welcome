@@ -56,10 +56,41 @@ import time
 import datetime
 from zoneinfo import ZoneInfo
 import requests
-from flask import Flask, Response, request, redirect, session
+from flask import Flask, Response, request, redirect, session, render_template
+from markupsafe import Markup
 from werkzeug.security import generate_password_hash, check_password_hash
 
 import kwikset_client
+
+
+
+def frag(template_name, **context):
+    """Render a partial and mark the result safe for embedding in a parent.
+
+    Jinja autoescapes by default, so a plain str returned by
+    render_template() would be escaped into visible angle brackets when
+    interpolated into another template. Partials are trusted markup that
+    this app just rendered, so they are wrapped in Markup; everything
+    else stays escaped, which is what makes the guest-data placeholders
+    safe without a manual h() call at each one.
+    """
+    return Markup(render_template(template_name, **context))
+
+
+def html_join(parts):
+    """Join fragments this app rendered into a single value safe to embed.
+
+    Markup("").join() escapes any plain str it is given, which is the
+    correct default -- but every caller here passes markup it just built
+    itself (partials from frag(), or <option> tags from a literal
+    f-string), so the parts are wrapped as trusted.
+
+    That trust is why guest and device data interpolated into those
+    f-strings must be escaped with h() at the point it goes in. It is not
+    escaped here.
+    """
+    return Markup("").join(Markup(part) for part in parts)
+
 
 
 def h(value):
@@ -1119,6 +1150,19 @@ except Exception as e:
 
 
 def render_html(g):
+    """Render the guest welcome screen.
+
+    refresh_cache() calls this from the background refresh thread, which has
+    no application context -- and render_template() requires one, both here
+    and inside the frag() call that builds the Wi-Fi section. Entering the
+    context here covers the whole body; nesting it inside a request is a
+    no-op.
+    """
+    with app.app_context():
+        return _render_welcome(g)
+
+
+def _render_welcome(g):
     nights = (g["departure"] - g["arrival"]).days
     party_bits = [f"{g['adults']} adult{'s' if g['adults'] != 1 else ''}"]
     if g["children"]:
@@ -1132,18 +1176,18 @@ def render_html(g):
     elif days_out == 1:
         countdown_str = "Arriving tomorrow"
     else:
-        countdown_str = f"<b>{days_out}</b>&nbsp;days until {h(g['first_name'])}'s group arrives"
+        countdown_str = Markup(f"<b>{days_out}</b>&nbsp;days until {h(g['first_name'])}'s group arrives")
 
     if _WIFI_QR_DATA_URI:
-        wifi_section = WIFI_SECTION_TEMPLATE.format(
+        wifi_section = frag("wifi_section.html", 
             qr_data_uri=_WIFI_QR_DATA_URI,
             ssid=WIFI_SSID,
         )
     else:
         wifi_section = ""
 
-    return TEMPLATE.format(
-        first_name=h(g["first_name"]),
+    return render_template("welcome.html",
+        first_name=g["first_name"],
         property_name=g["property_name"],
         property_name_upper=g["property_name"].upper(),
         arrival_str=format_date(g["arrival"]),
@@ -1158,344 +1202,6 @@ def render_html(g):
         countdown_str=countdown_str,
         wifi_section=wifi_section,
     )
-
-
-WIFI_SECTION_TEMPLATE = """
-  <h2 class="section-title">Connect to Wi-Fi</h2>
-  <div class="wifi-card">
-    <img class="wifi-qr" src="{qr_data_uri}" alt="Wi-Fi QR code" width="160" height="160">
-    <div class="wifi-info">
-      <div class="wifi-label">Scan to join automatically</div>
-      <div class="wifi-network">{ssid}</div>
-      <div class="wifi-hint">Or connect manually in your phone's Wi-Fi settings.</div>
-    </div>
-  </div>
-"""
-
-
-TEMPLATE = """<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Welcome to {property_name}</title>
-<meta http-equiv="refresh" content="3600">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/app.css?v=1">
-<style>
-  body{{
-    margin:0;
-    overflow-x:hidden;
-    background: var(--limestone);
-    color: var(--bark);
-    font-family:'Work Sans', sans-serif;
-    -webkit-font-smoothing:antialiased;
-  }}
-  .wrap{{ max-width: 1180px; padding-top: 0; }}
-  .hero{{
-    background: linear-gradient(180deg, var(--creek) 0%, var(--creek-deep) 100%);
-    color: var(--limestone);
-    padding: 56px 28px 40px;
-    border-radius: 0 0 28px 28px;
-    position: relative;
-    overflow: hidden;
-  }}
-  .hero-top{{
-    display:flex;
-    justify-content:space-between;
-    align-items:flex-start;
-    gap: 24px;
-    flex-wrap: wrap;
-  }}
-  .hero-left{{ flex: 1 1 260px; min-width: 200px; }}
-  .hero-right{{
-    flex: 0 1 380px;
-    min-width: 320px;
-    background: rgba(239,234,217,0.08);
-    border: 1px solid rgba(239,234,217,0.2);
-    border-radius: 18px;
-    padding: 30px 34px;
-  }}
-  .res-row{{ display:flex; gap:28px; }}
-  .res-divider{{ height:1px; background: rgba(239,234,217,0.15); margin: 20px 0; }}
-  .res-stat{{ flex:1; }}
-  .res-label{{
-    font-size: 13px;
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
-    color: #B9CFC2;
-    margin-bottom: 7px;
-  }}
-  .res-value{{
-    font-family:'Fraunces', serif;
-    font-weight: 500;
-    font-size: 28px;
-    color: var(--limestone);
-  }}
-  .res-value-sm{{ font-size: 22px; }}
-  .res-sub{{ font-size: 15px; color:#B9CFC2; margin-top:4px; }}
-  .eyebrow{{
-    font-size: 13px;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    color: #B9CFC2;
-    margin: 0 0 18px;
-  }}
-  h1{{
-    font-family:'Fraunces', serif;
-    font-weight: 500;
-    font-size: clamp(34px, 4.5vw, 64px);
-    line-height: 1.02;
-    margin: 0 0 10px;
-  }}
-  .property{{
-    font-family:'Fraunces', serif;
-    font-style: italic;
-    font-weight: 300;
-    font-size: 21px;
-    color: #D8CBA6;
-    margin: 0 0 30px;
-  }}
-  .countdown{{
-    display:inline-flex;
-    align-items:baseline;
-    gap:10px;
-    background: rgba(239,234,217,0.09);
-    border: 1px solid rgba(239,234,217,0.25);
-    border-radius: 100px;
-    padding: 8px 18px 8px 16px;
-    font-size: 14px;
-    color: #E8E2CE;
-  }}
-  .countdown b{{
-    font-family:'Fraunces', serif;
-    font-size: 20px;
-    font-weight: 600;
-    color: var(--limestone);
-  }}
-  .creek-divider{{ display:block; width:100%; height:56px; margin-top:24px; }}
-  .creek-divider path{{
-    fill:none;
-    stroke: var(--sage);
-    stroke-width: 2.5;
-    stroke-linecap: round;
-    stroke-dasharray: 900;
-    stroke-dashoffset: 900;
-    animation: draw 1.8s ease forwards 0.3s;
-  }}
-  @keyframes draw{{ to{{ stroke-dashoffset: 0; }} }}
-  .lower-grid{{
-    display:grid;
-    grid-template-columns: 1.3fr 1fr;
-    gap: 48px;
-    align-items:start;
-    margin-top: 44px;
-  }}
-  @media (max-width: 800px){{
-    .lower-grid{{ grid-template-columns: 1fr; gap: 8px; }}
-  }}
-  .section-title{{
-    font-family:'Fraunces', serif;
-    font-weight:500;
-    font-size: 22px;
-    color: var(--creek-deep);
-    margin: 0 0 16px;
-  }}
-  .path{{
-    position: relative;
-    padding-left: 30px;
-    border-left: 2px solid #DCD4B8;
-    margin-left: 6px;
-  }}
-  .step{{ position: relative; padding-bottom: 26px; }}
-  .step:last-child{{ padding-bottom:0; }}
-  .step::before{{
-    content:'';
-    position:absolute;
-    left:-37px;
-    top:2px;
-    width:12px;
-    height:12px;
-    border-radius:50%;
-    background: var(--clay);
-    border: 3px solid var(--limestone);
-    box-shadow: 0 0 0 1px #DCD4B8;
-  }}
-  .step .step-title{{
-    font-weight:600;
-    font-size: 15px;
-    color: var(--bark);
-    margin-bottom:3px;
-  }}
-  .step .step-detail{{ font-size: 14px; color:#5C5443; line-height:1.5;}}
-  .wifi-card{{
-    display:flex;
-    align-items:center;
-    gap: 20px;
-    background: #fff;
-    border: 1px solid #E2DBC5;
-    border-radius: 14px;
-    padding: 20px;
-  }}
-  .wifi-qr{{
-    flex-shrink: 0;
-    width: 100px;
-    height: 100px;
-    border-radius: 8px;
-    border: 1px solid #E2DBC5;
-  }}
-  .wifi-label{{
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
-    color: #8A7F63;
-    margin-bottom: 4px;
-  }}
-  .wifi-network{{
-    font-family:'Fraunces', serif;
-    font-weight: 500;
-    font-size: 20px;
-    color: var(--creek-deep);
-    margin-bottom: 6px;
-  }}
-  .wifi-hint{{ font-size: 13px; color:#77705C; }}
-  .note{{
-    margin-top: 24px;
-    background: #F6F1E1;
-    border: 1px solid #E5DCB9;
-    border-radius: 14px;
-    padding: 18px 20px;
-    font-size: 14px;
-    color: #5C5443;
-    line-height: 1.6;
-  }}
-  .note b{{ color: var(--creek-deep); }}
-  .footer{{
-    margin-top: 34px;
-    text-align:center;
-    font-size: 12px;
-    color:#9A9276;
-    letter-spacing:0.04em;
-  }}
-</style>
-</head>
-<body>
-<div class="wrap">
-  <div class="hero">
-    <div class="hero-top">
-      <div class="hero-left">
-        <p class="eyebrow">Upcoming Arrival</p>
-        <h1>Welcome,<br>{first_name}</h1>
-        <p class="property">{property_name}</p>
-        <div class="countdown">{countdown_str}</div>
-      </div>
-      <div class="hero-right">
-        <div class="res-row">
-          <div class="res-stat">
-            <div class="res-label">Arrival</div>
-            <div class="res-value">{arrival_str}</div>
-            <div class="res-sub">From {check_in_time}</div>
-          </div>
-          <div class="res-stat">
-            <div class="res-label">Departure</div>
-            <div class="res-value">{departure_str}</div>
-            <div class="res-sub">By {check_out_time}</div>
-          </div>
-        </div>
-        <div class="res-divider"></div>
-        <div class="res-row">
-          <div class="res-stat">
-            <div class="res-label">Stay</div>
-            <div class="res-value res-value-sm">{nights} {nights_label}</div>
-          </div>
-          <div class="res-stat">
-            <div class="res-label">Party</div>
-            <div class="res-value res-value-sm">{party_str}</div>
-          </div>
-        </div>
-        <div class="res-divider"></div>
-        <div class="res-row">
-          <div class="res-stat">
-            <div class="res-label">Booked via</div>
-            <div class="res-value res-value-sm">{platform}</div>
-          </div>
-          <div class="res-stat">
-            <div class="res-label">Confirmation</div>
-            <div class="res-value res-value-sm">{confirmation}</div>
-          </div>
-        </div>
-      </div>
-    </div>
-    <svg class="creek-divider" viewBox="0 0 700 56" preserveAspectRatio="none">
-      <path d="M0,28 C70,10 140,46 210,28 C280,10 350,46 420,28 C490,10 560,46 630,28 C660,20 680,30 700,26" />
-    </svg>
-  </div>
-
-  <div class="lower-grid">
-    <div class="col-main">
-      <h2 class="section-title">The path in</h2>
-      <div class="path">
-        <div class="step">
-          <div class="step-title">Booking confirmed</div>
-          <div class="step-detail">Reserved via {platform} — everything's locked in on our end.</div>
-        </div>
-        <div class="step">
-          <div class="step-title">Arrival — {arrival_str}</div>
-          <div class="step-detail">Check-in opens at {check_in_time}. We'll have the villa ready and waiting.</div>
-        </div>
-        <div class="step">
-          <div class="step-title">Departure — {departure_str}</div>
-          <div class="step-detail">Check-out by {check_out_time}. We hope the creek treats you well.</div>
-        </div>
-      </div>
-    </div>
-
-    <div class="col-side">
-{wifi_section}
-      <div class="note">
-        <b>Host note —</b> this screen refreshes automatically from OwnerRez every hour. Add
-        address and house-guide details directly in this template if you want them to
-        show every time.
-      </div>
-    </div>
-  </div>
-
-  <div class="footer">{property_name_upper} · GUEST WELCOME</div>
-</div>
-<script>
-  // Belt-and-suspenders auto-refresh: the <meta refresh> tag above should
-  // handle this, but some kiosk/tablet browsers ignore meta refresh
-  // entirely. This JS timer forces a hard reload with a cache-busting
-  // query param so it can't just re-show a cached copy of this page.
-  setTimeout(function() {{
-    window.location.href = window.location.pathname + "?_=" + Date.now();
-  }}, 3600000); // 1 hour
-</script>
-</body>
-</html>
-"""
-
-ERROR_TEMPLATE = """<!DOCTYPE html>
-<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Welcome screen — error</title>
-<link rel="stylesheet" href="/static/app.css?v=1">
-<meta http-equiv="refresh" content="300">
-<style>
-body{{font-family:sans-serif;background:#F6F1E1;color:#2A2018;padding:60px;}}
-h1{{color:#C1652F;}}
-</style></head>
-<body>
-<h1>Couldn't refresh from OwnerRez</h1>
-<p>{error}</p>
-<p>Last successful update: {last_updated}</p>
-<p>This page will retry automatically.</p>
-<script>
-  setTimeout(function() {{
-    window.location.href = window.location.pathname + "?_=" + Date.now();
-  }}, 300000); // 5 minutes, matching the meta refresh above
-</script>
-</body></html>
-"""
 
 
 # ---------------------------------------------------------------------------
@@ -1992,6 +1698,10 @@ def _format_schedule_window(schedule):
 # 7. WEB SERVER
 # ---------------------------------------------------------------------------
 app = Flask(__name__)
+# Jinja drops a template's final newline by default. These templates were
+# lifted verbatim out of str.format() constants that did end with one, so
+# keeping it makes the rendered bytes match what the app served before.
+app.jinja_env.keep_trailing_newline = True
 app.secret_key = SECRET_KEY
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -2010,7 +1720,7 @@ def csrf_field():
     if not token:
         token = secrets.token_hex(32)
         session["csrf_token"] = token
-    return f'<input type="hidden" name="csrf_token" value="{token}">'
+    return Markup(f'<input type="hidden" name="csrf_token" value="{token}">')
 
 
 # Shared left-sidebar navigation, used on every admin page (not the
@@ -2028,12 +1738,12 @@ _SIDEBAR_NAV_ITEMS = [
 ]
 
 def render_sidebar(active_path):
-    username = session.get("username", "")
-    links_html = "".join(
+    username = h(session.get("username", ""))
+    links_html = html_join(
         f'<a class="sidebar-link{" active" if path == active_path else ""}" href="{path}">{label}</a>'
         for path, label in _SIDEBAR_NAV_ITEMS
     )
-    return f"""
+    return Markup(f"""
 <button class="hamburger-btn" onclick="document.getElementById('sidebar').classList.toggle('open'); document.getElementById('sidebar-backdrop').classList.toggle('open');" aria-label="Menu">&#9776;</button>
 <div class="sidebar-backdrop" id="sidebar-backdrop" onclick="document.getElementById('sidebar').classList.remove('open'); this.classList.remove('open');"></div>
 <nav class="sidebar" id="sidebar">
@@ -2046,7 +1756,7 @@ def render_sidebar(active_path):
     <form method="POST" action="/logout" class="sidebar-logout-form">{csrf_field()}<button type="submit" class="sidebar-logout-btn">Log out</button></form>
   </div>
 </nav>
-"""
+""")
 
 
 # Paths reachable without being logged in. Exact matches only (not
@@ -2134,9 +1844,9 @@ def setup():
             db_set_user_password(admin["id"], password)
             return redirect("/login")
 
-    html = SETUP_TEMPLATE.format(
+    html = render_template("setup.html", 
         username=ADMIN_USERNAME,
-        error_banner=f'<div class="error-banner">{h(error)}</div>' if error else "",
+        error_banner=Markup(f'<div class="error-banner">{h(error)}</div>') if error else "",
     )
     return _no_cache(Response(html, mimetype="text/html"))
 
@@ -2162,8 +1872,8 @@ def login():
             return redirect(request.form.get("next") or "/menu")
         error = "Incorrect username or password."
 
-    html = LOGIN_TEMPLATE.format(
-        error_banner=f'<div class="error-banner">{h(error)}</div>' if error else "",
+    html = render_template("login.html", 
+        error_banner=Markup(f'<div class="error-banner">{h(error)}</div>') if error else "",
         next_path=next_path,
     )
     return _no_cache(Response(html, mimetype="text/html"))
@@ -2226,79 +1936,10 @@ def logout():
 
 @app.route("/menu")
 def menu():
-    html = MENU_TEMPLATE.format(
+    html = render_template("menu.html", 
         sidebar=render_sidebar("/menu"),
     )
     return _no_cache(Response(html, mimetype="text/html"))
-
-
-MENU_TEMPLATE = """<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Menu — Villa Brushy Creek</title>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/app.css?v=1">
-<style>
-  @media (max-width: 600px){{
-  }}
-  h1{{ margin: 0 0 28px; }}
-  .menu-grid{{ display:grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }}
-  @media (max-width: 520px){{
-    .menu-grid{{ grid-template-columns: 1fr; }}
-  }}
-  .menu-card{{
-    display:block; background:#fff; border:1px solid #E2DBC5; border-radius:16px;
-    padding: 22px 20px; text-decoration:none; color: var(--bark);
-    transition: border-color 0.15s ease, box-shadow 0.15s ease;
-  }}
-  .menu-card:hover{{ border-color: var(--creek); box-shadow: 0 8px 20px -12px rgba(42,32,24,0.3); }}
-  .menu-card-title{{
-    font-family:'Fraunces', serif; font-weight:500; font-size: 19px; color: var(--creek-deep); margin-bottom: 6px;
-  }}
-  .menu-card-desc{{ font-size: 13px; color:#77705C; line-height:1.5; }}
-</style>
-</head>
-<body>
-<div class="app-shell">
-  {sidebar}
-  <main class="main-content">
-  <div class="wrap">
-  <h1>Villa Brushy Creek</h1>
-
-  <div class="menu-grid">
-    <a class="menu-card" href="/">
-      <div class="menu-card-title">Welcome Screen</div>
-      <div class="menu-card-desc">The guest-facing display showing the next arriving guest -- what's shown on the lobby tablet.</div>
-    </a>
-    <a class="menu-card" href="/manage">
-      <div class="menu-card-title">Manage Arrivals</div>
-      <div class="menu-card-desc">Pick which guest shows on the welcome screen -- automatic (soonest arrival) or manually pinned.</div>
-    </a>
-    <a class="menu-card" href="/cleaning">
-      <div class="menu-card-title">Cleaning Checklist</div>
-      <div class="menu-card-desc">Turnover checklist per guest, with progress tracking between stays.</div>
-    </a>
-    <a class="menu-card" href="/pool">
-      <div class="menu-card-title">Pool Control</div>
-      <div class="menu-card-desc">Live readings, temperature, equipment on/off, and recurring schedules.</div>
-    </a>
-    <a class="menu-card" href="/doors">
-      <div class="menu-card-title">Door Codes</div>
-      <div class="menu-card-desc">Send Kwikset keypad codes to arriving guests, and manage all codes sent.</div>
-    </a>
-    <a class="menu-card" href="/users">
-      <div class="menu-card-title">Users</div>
-      <div class="menu-card-desc">Add or remove logins, reset passwords.</div>
-    </a>
-  </div>
-  </div>
-  </main>
-</div>
-</body>
-</html>
-"""
 
 
 @app.route("/messages")
@@ -2326,7 +1967,7 @@ def messages_page():
     )
 
     if not open_messages:
-        cards_html = '<p class="empty-state">No open guest messages right now.</p>'
+        cards_html = Markup('<p class="empty-state">No open guest messages right now.</p>')
     else:
         cards = []
         for row in open_messages:
@@ -2339,24 +1980,24 @@ def messages_page():
                 except Exception as e:
                     ai_error = str(e)
 
-            cards.append(MESSAGE_CARD_TEMPLATE.format(
+            cards.append(frag("message_card.html", 
                 event_id=row["id"],
-                guest=h(row["guest"] or "Unknown guest"),
+                guest=row["guest"] or "Unknown guest",
                 received=row["received_utc"] or "",
-                body=h(row["body"]),
-                draft=h(draft),
-                ai_note=(f'<div class="ai-note">AI draft unavailable: {h(ai_error)}</div>' if ai_error else ""),
+                body=row["body"],
+                draft=draft,
+                ai_note=(Markup(f'<div class="ai-note">AI draft unavailable: {h(ai_error)}</div>') if ai_error else ""),
                 csrf_field=csrf_field(),
             ))
-        cards_html = "".join(cards)
+        cards_html = html_join(cards)
 
-    html = MESSAGES_TEMPLATE.format(
-        error_banner=f'<div class="error-banner">{h(error)}</div>' if error else "",
+    html = render_template("messages.html", 
+        error_banner=Markup(f'<div class="error-banner">{h(error)}</div>') if error else "",
         cards=cards_html,
         webhook_url=webhook_url or "Set PUBLIC_BASE_URL to see your real webhook URL here.",
         subscribed_label="Subscribed" if message_subscribed else "Not subscribed",
         subscribed_class="status-on" if message_subscribed else "status-off",
-        subs_error_banner=(f'<div class="error-banner">{h(subs_error)}</div>' if subs_error else ""),
+        subs_error_banner=(Markup(f'<div class="error-banner">{h(subs_error)}</div>') if subs_error else ""),
         ai_status_label="Configured" if ai_configured else "Not configured",
         ai_status_class="status-on" if ai_configured else "status-off",
         csrf_field=csrf_field(),
@@ -2438,137 +2079,11 @@ def messages_skip():
     return redirect("/messages")
 
 
-MESSAGE_CARD_TEMPLATE = """
-  <div class="message-card" id="msg-{event_id}">
-    <div class="message-header">
-      <div class="message-guest">{guest}</div>
-      <div class="message-received">{received}</div>
-    </div>
-    <div class="message-body">{body}</div>
-    {ai_note}
-    <form method="POST" action="/messages/send" class="message-reply-form">
-      {csrf_field}
-      <input type="hidden" name="event_id" value="{event_id}">
-      <textarea name="draft_text" class="message-textarea" rows="4" placeholder="Type or generate a reply...">{draft}</textarea>
-      <div class="message-actions">
-        <button type="submit" class="send-btn">Send reply</button>
-      </div>
-    </form>
-    <div class="message-secondary-actions">
-      <form method="POST" action="/messages/regenerate">
-        {csrf_field}
-        <input type="hidden" name="event_id" value="{event_id}">
-        <button type="submit" class="select-btn">Regenerate AI draft</button>
-      </form>
-      <form method="POST" action="/messages/skip" onsubmit="return confirm('Skip this message without replying?');">
-        {csrf_field}
-        <input type="hidden" name="event_id" value="{event_id}">
-        <button type="submit" class="delete-btn">Skip (no reply)</button>
-      </form>
-    </div>
-  </div>
-"""
-
-MESSAGES_TEMPLATE = """<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Messages — Villa Brushy Creek</title>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/app.css?v=1">
-<style>
-  h1{{ margin: 0 0 20px; }}
-  h2.section-title{{ font-family:'Fraunces', serif; font-weight:500; font-size: 18px; color: var(--creek-deep); margin: 32px 0 12px; }}
-  .setup-card{{
-    background:#fff; border:1px solid #E2DBC5; border-radius:14px; padding: 16px 20px; margin-bottom: 12px;
-  }}
-  .setup-row{{ display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom: 8px; }}
-  .setup-row:last-child{{ margin-bottom: 0; }}
-  .setup-label{{ font-size: 13px; color:#5C5443; }}
-  .setup-url{{ font-size: 12px; color:#8A7F63; word-break:break-all; }}
-  .setup-btn{{
-    font-family:'Work Sans', sans-serif; font-size: 12px; font-weight:500; padding: 7px 14px;
-    border-radius: 100px; border:1px solid var(--creek); background: var(--creek); color:#fff; cursor:pointer;
-  }}
-  .setup-btn:hover{{ background: var(--creek-deep); }}
-  .message-card{{
-    background:#fff; border:1px solid #E2DBC5; border-radius:16px; padding: 20px 22px; margin-bottom: 18px;
-  }}
-  .message-header{{ display:flex; justify-content:space-between; align-items:baseline; gap:12px; flex-wrap:wrap; margin-bottom: 10px; }}
-  .message-guest{{ font-family:'Fraunces', serif; font-weight:500; font-size: 17px; color: var(--creek-deep); }}
-  .message-received{{ font-size: 12px; color:#9A9276; }}
-  .message-body{{
-    background:#F6F1E1; border-radius:10px; padding: 12px 14px; font-size: 14px; color:#5C5443;
-    margin-bottom: 12px; white-space:pre-wrap;
-  }}
-  .ai-note{{ font-size: 12px; color:#8A3D14; margin-bottom: 10px; }}
-  .message-textarea{{
-    width:100%; font-family:'Work Sans', sans-serif; font-size: 14px; padding: 10px 12px;
-    border-radius: 9px; border:1px solid #DCD4B8; resize:vertical; margin-bottom: 10px;
-  }}
-  .message-actions{{ display:flex; justify-content:flex-end; }}
-  .send-btn{{
-    font-family:'Work Sans', sans-serif; font-size: 13px; font-weight:500; padding: 9px 20px;
-    border-radius: 100px; border:1px solid var(--creek); background: var(--creek); color:#fff; cursor:pointer;
-  }}
-  .send-btn:hover{{ background: var(--creek-deep); }}
-  .message-secondary-actions{{ display:flex; gap:10px; margin-top: 10px; flex-wrap:wrap; }}
-  .message-secondary-actions form{{ margin:0; }}
-  .select-btn{{
-    font-family:'Work Sans', sans-serif; font-size: 12px; font-weight:500; padding: 7px 14px;
-    border-radius: 100px; border:1px solid var(--clay); background:#fff; color: var(--clay); cursor:pointer;
-  }}
-  .delete-btn{{
-    font-family:'Work Sans', sans-serif; font-size: 12px; color:#8A7F63; background:none;
-    border:1px solid #DCD4B8; border-radius:100px; padding: 7px 14px; cursor:pointer;
-  }}
-</style>
-</head>
-<body>
-<div class="app-shell">
-  {sidebar}
-  <main class="main-content">
-  <div class="wrap">
-  <h1>Messages</h1>
-  {error_banner}
-
-  <div class="setup-card">
-    <div class="setup-row">
-      <span class="setup-label">Webhook subscription</span>
-      <span class="status-badge {subscribed_class}">{subscribed_label}</span>
-    </div>
-    <div class="setup-row">
-      <span class="setup-url">{webhook_url}</span>
-      <form method="POST" action="/messages/setup_webhook">
-        {csrf_field}
-        <button type="submit" class="setup-btn">Register webhook</button>
-      </form>
-    </div>
-    {subs_error_banner}
-    <div class="setup-row">
-      <span class="setup-label">AI drafting</span>
-      <span class="status-badge {ai_status_class}">{ai_status_label}</span>
-    </div>
-  </div>
-
-  <h2 class="section-title">Open messages</h2>
-  {cards}
-
-  <p class="footer-note">Nothing here is ever sent automatically -- every reply is generated only as a suggestion, and only sends when you click "Send reply" yourself, with whatever text is actually in the box at that moment. This page has no separate permission tier -- don't share the URL publicly.</p>
-  </div>
-  </main>
-</div>
-</body>
-</html>
-"""
-
-
 @app.route("/users")
 def users_page():
     users = db_list_users()
-    rows = "".join(
-        USER_ROW_TEMPLATE.format(
+    rows = html_join(
+        frag("user_row.html", 
             user_id=u["id"],
             username=u["username"],
             status_label="Active" if u["password_hash"] else "Awaiting first login",
@@ -2579,7 +2094,7 @@ def users_page():
         )
         for u in users
     )
-    html = USERS_TEMPLATE.format(
+    html = render_template("users.html", 
         rows=rows,
         csrf_field=csrf_field(),
         sidebar=render_sidebar("/users"),
@@ -2627,177 +2142,6 @@ def users_reset_password():
     return redirect("/users")
 
 
-SETUP_TEMPLATE = """<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Set up admin password — Villa Brushy Creek</title>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/app.css?v=1">
-<style>
-  body{{ margin:0; min-height:100vh; overflow-x:hidden; display:flex; align-items:center; justify-content:center;
-    background: linear-gradient(180deg, var(--creek) 0%, var(--creek-deep) 100%);
-    font-family:'Work Sans', sans-serif; padding: 20px; }}
-  .card{{ background:#fff; border-radius:18px; padding:36px 32px; max-width:380px; width:100%; }}
-  h1{{ font-family:'Fraunces', serif; font-weight:500; font-size:24px; color: var(--creek-deep); margin:0 0 6px; }}
-  .subtitle{{ font-size:13px; color:#77705C; margin:0 0 24px; }}
-  label{{ font-size:12px; text-transform:uppercase; letter-spacing:0.06em; color:#8A7F63; display:block; margin-bottom:6px; }}
-  input{{ width:100%; font-family:'Work Sans', sans-serif; font-size:15px; padding:10px 12px;
-    border-radius:9px; border:1px solid #DCD4B8; margin-bottom:16px; }}
-  button{{ width:100%; font-family:'Work Sans', sans-serif; font-size:14px; font-weight:500;
-    padding:11px; border-radius:100px; border:none; background: var(--creek); color:#fff; cursor:pointer; }}
-  button:hover{{ background: var(--creek-deep); }}
-  .error-banner{{ background:#FBEAE0; border:1px solid #E8B99B; color:#8A3D14; padding:10px 14px;
-    border-radius:10px; margin-bottom:18px; font-size:13px; }}
-  .hint{{ font-size:12px; color:#9A9276; margin-top:-10px; margin-bottom:18px; }}
-</style>
-</head>
-<body>
-<div class="card">
-  <h1>Set up admin access</h1>
-  <p class="subtitle">This site isn't secured yet. Choose a password for the "{username}" account to finish setup.</p>
-  {error_banner}
-  <form method="POST">
-    <label>Password</label>
-    <input type="password" name="password" required autofocus>
-    <label>Confirm password</label>
-    <input type="password" name="confirm" required>
-    <p class="hint">At least 8 characters.</p>
-    <button type="submit">Set password &amp; continue</button>
-  </form>
-</div>
-</body>
-</html>
-"""
-
-LOGIN_TEMPLATE = """<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Log in — Villa Brushy Creek</title>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/app.css?v=1">
-<style>
-  body{{ margin:0; min-height:100vh; overflow-x:hidden; display:flex; align-items:center; justify-content:center;
-    background: linear-gradient(180deg, var(--creek) 0%, var(--creek-deep) 100%);
-    font-family:'Work Sans', sans-serif; padding: 20px; }}
-  .card{{ background:#fff; border-radius:18px; padding:36px 32px; max-width:340px; width:100%; }}
-  h1{{ font-family:'Fraunces', serif; font-weight:500; font-size:24px; color: var(--creek-deep); margin:0 0 24px; }}
-  label{{ font-size:12px; text-transform:uppercase; letter-spacing:0.06em; color:#8A7F63; display:block; margin-bottom:6px; }}
-  input{{ width:100%; font-family:'Work Sans', sans-serif; font-size:15px; padding:10px 12px;
-    border-radius:9px; border:1px solid #DCD4B8; margin-bottom:16px; }}
-  button{{ width:100%; font-family:'Work Sans', sans-serif; font-size:14px; font-weight:500;
-    padding:11px; border-radius:100px; border:none; background: var(--creek); color:#fff; cursor:pointer; }}
-  button:hover{{ background: var(--creek-deep); }}
-  .error-banner{{ background:#FBEAE0; border:1px solid #E8B99B; color:#8A3D14; padding:10px 14px;
-    border-radius:10px; margin-bottom:18px; font-size:13px; }}
-</style>
-</head>
-<body>
-<div class="card">
-  <h1>Villa Brushy Creek</h1>
-  {error_banner}
-  <form method="POST">
-    <input type="hidden" name="next" value="{next_path}">
-    <label>Username</label>
-    <input type="text" name="username" required autofocus>
-    <label>Password</label>
-    <input type="password" name="password" required>
-    <button type="submit">Log in</button>
-  </form>
-</div>
-</body>
-</html>
-"""
-
-USER_ROW_TEMPLATE = """
-      <tr>
-        <td class="guest-name">{username}{self_marker}</td>
-        <td><span class="status-badge {status_class}">{status_label}</span></td>
-        <td>
-          <form method="POST" action="/users/reset_password" class="row-send-form">
-            {csrf_field}
-            <input type="hidden" name="user_id" value="{user_id}">
-            <input type="password" name="password" placeholder="New password" class="row-time-select" required>
-            <button type="submit" class="select-btn">Set password</button>
-          </form>
-        </td>
-        <td>
-          <form method="POST" action="/users/delete" onsubmit="return confirm('Remove this user?');">
-            {csrf_field}
-            <input type="hidden" name="user_id" value="{user_id}">
-            <button type="submit" class="delete-btn" {delete_disabled}>Remove</button>
-          </form>
-        </td>
-      </tr>
-"""
-
-USERS_TEMPLATE = """<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Users — Villa Brushy Creek</title>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/app.css?v=1">
-<style>
-  h1{{ margin: 0 0 20px; }}
-  table{{ width:100%; border-collapse: collapse; background:#fff; border-radius: 14px; overflow:hidden; border:1px solid #E2DBC5; margin-bottom: 0; }}
-  .table-scroll{{ overflow-x:auto; -webkit-overflow-scrolling:touch; margin-bottom: 28px; }}
-  .table-scroll table{{ min-width: 560px; }}
-  .row-send-form{{ display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin:0; }}
-  .row-time-select{{ font-family:'Work Sans', sans-serif; font-size: 12px; padding: 6px 8px;
-    border-radius: 7px; border:1px solid #DCD4B8; }}
-  .select-btn{{ font-family:'Work Sans', sans-serif; font-size: 13px; font-weight:500; padding: 8px 14px;
-    border-radius: 100px; border:1px solid var(--clay); background:#fff; color: var(--clay); cursor:pointer; white-space:nowrap; }}
-  .delete-btn{{ font-family:'Work Sans', sans-serif; font-size: 12px; color:#8A7F63; background:none;
-    border:1px solid #DCD4B8; border-radius:100px; padding: 6px 14px; cursor:pointer; }}
-  .delete-btn[disabled]{{ opacity:0.4; cursor:default; }}
-  .add-user-card{{ background:#fff; border:1px solid #E2DBC5; border-radius:14px; padding: 18px 20px; }}
-  .add-user-form{{ display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end; }}
-  .form-field input{{ font-family:'Work Sans', sans-serif; font-size: 13px; padding: 8px 10px;
-    border-radius: 7px; border:1px solid #DCD4B8; }}
-  .add-user-btn{{ font-family:'Work Sans', sans-serif; font-size: 13px; font-weight:500; padding: 9px 18px;
-    border-radius: 100px; border:1px solid var(--creek); background: var(--creek); color:#fff; cursor:pointer; }}
-  .add-user-btn:hover{{ background: var(--creek-deep); }}
-</style>
-</head>
-<body>
-<div class="app-shell">
-  {sidebar}
-  <main class="main-content">
-  <div class="wrap">
-  <h1>Users</h1>
-
-  <div class="table-scroll">
-  <table>
-    <thead><tr><th>Username</th><th>Status</th><th></th><th></th></tr></thead>
-    <tbody>
-      {rows}
-    </tbody>
-  </table>
-  </div>
-
-  <div class="add-user-card">
-    <form method="POST" action="/users/add" class="add-user-form">
-      {csrf_field}
-      <div class="form-field"><label>Username</label><input type="text" name="username" required></div>
-      <div class="form-field"><label>Password</label><input type="password" name="password" required></div>
-      <button type="submit" class="add-user-btn">Add user</button>
-    </form>
-  </div>
-
-  <p class="footer-note">Anyone with a login here can reach every page on this site, including pool control and sending door codes -- there's no separate permission tiers yet. Keep this list to people you'd hand a physical key to.</p>
-  </div>
-  </main>
-</div>
-</body>
-</html>
-"""
-
-
 @app.route("/")
 def index():
     # Fetch fresh OwnerRez data on every page load, not just once an
@@ -2810,8 +2154,8 @@ def index():
     with _cache_lock:
         if _cache["last_error"] and _cache["last_updated"] is None:
             # Never had a successful fetch yet
-            html = ERROR_TEMPLATE.format(
-                error=h(_cache["last_error"]),
+            html = render_template("error.html", 
+                error=_cache["last_error"],
                 last_updated="never",
             )
         else:
@@ -2863,9 +2207,9 @@ def manage():
         for g in upcoming:
             is_selected = g["booking_key"] == selected_key
             nights = (g["departure"] - g["arrival"]).days
-            row_parts.append(MANAGE_ROW_TEMPLATE.format(
+            row_parts.append(frag("manage_row.html", 
                 booking_key=g["booking_key"],
-                first_name=h(g["first_name"]),
+                first_name=g["first_name"],
                 arrival_str=format_date(g["arrival"]),
                 departure_str=format_date(g["departure"]),
                 nights=nights,
@@ -2878,16 +2222,16 @@ def manage():
                 button_disabled="disabled" if is_selected else "",
                 csrf_field=csrf_field(),
             ))
-        rows_html = "".join(row_parts)
+        rows_html = html_join(row_parts)
 
-    html = MANAGE_TEMPLATE.format(
+    html = render_template("manage.html", 
         rows=rows_html,
         mode_auto_class="mode-active" if mode == "auto" else "",
         mode_manual_class="mode-active" if mode == "manual" else "",
         last_updated=last_updated or "never",
         upcoming_count_label=len(upcoming),
         error_banner=(
-            f'<div class="error-banner">Last refresh failed: {h(last_error)}</div>'
+            Markup(f'<div class="error-banner">Last refresh failed: {h(last_error)}</div>')
             if last_error else ""
         ),
         csrf_field=csrf_field(),
@@ -2944,8 +2288,8 @@ def cleaning():
             total = len(CLEANING_TASKS)
             all_done = done_count == total
 
-            checkbox_rows = "".join(
-                CLEANING_CHECKBOX_TEMPLATE.format(
+            checkbox_rows = html_join(
+                frag("cleaning_checkbox.html", 
                     booking_key=g["booking_key"],
                     task_name=task_name,
                     checked="checked" if checked else "",
@@ -2955,26 +2299,26 @@ def cleaning():
                 for task_name, checked in task_state.items()
             )
 
-            cards.append(CLEANING_CARD_TEMPLATE.format(
+            cards.append(frag("cleaning_card.html", 
                 booking_key=g["booking_key"],
-                first_name=h(g["first_name"]),
+                first_name=g["first_name"],
                 arrival_str=format_date(g["arrival"]),
                 departure_str=format_date(g["departure"]),
                 done_count=done_count,
                 total=total,
                 progress_pct=int(100 * done_count / total) if total else 0,
-                ready_badge='<span class="ready-badge">Ready ✓</span>' if all_done else "",
+                ready_badge=Markup('<span class="ready-badge">Ready ✓</span>') if all_done else "",
                 card_class="cleaning-card-done" if all_done else "",
                 checkbox_rows=checkbox_rows,
                 csrf_field=csrf_field(),
             ))
-        cards_html = "".join(cards)
+        cards_html = html_join(cards)
 
-    html = CLEANING_TEMPLATE.format(
+    html = render_template("cleaning.html", 
         cards=cards_html,
         last_updated=last_updated or "never",
         error_banner=(
-            f'<div class="error-banner">Last refresh failed: {h(last_error)}</div>'
+            Markup(f'<div class="error-banner">Last refresh failed: {h(last_error)}</div>')
             if last_error else ""
         ),
         csrf_field=csrf_field(),
@@ -3016,14 +2360,14 @@ def pool():
             error = str(e)
 
     if error:
-        html = POOL_TEMPLATE.format(
+        html = render_template("pool.html", 
             system_name=PROPERTY_DISPLAY_NAME,
             online_badge="",
-            error_banner=f'<div class="error-banner">{h(error)}</div>',
+            error_banner=Markup(f'<div class="error-banner">{h(error)}</div>'),
             sensor_cards="",
             setpoint_cards="",
             equipment_cards="",
-            schedule_rows='<p class="empty-state">Pool control must be working to manage schedules.</p>',
+            schedule_rows=Markup('<p class="empty-state">Pool control must be working to manage schedules.</p>'),
             device_options="",
             csrf_field=csrf_field(),
             sidebar=render_sidebar("/pool"),
@@ -3033,12 +2377,12 @@ def pool():
     try:
         sensors, setpoints, equipment = classify_pool_devices(snapshot["devices"])
 
-        sensor_html = "".join(
-            POOL_SENSOR_CARD_TEMPLATE.format(label=s["label"], value=s["state"])
+        sensor_html = html_join(
+            frag("pool_sensor_card.html", label=s["label"], value=s["state"])
             for s in sensors
         )
-        setpoint_html = "".join(
-            POOL_SETPOINT_CARD_TEMPLATE.format(
+        setpoint_html = html_join(
+            frag("pool_setpoint_card.html", 
                 key=s["key"],
                 label=s["label"],
                 value=s["state"] or "—",
@@ -3048,8 +2392,8 @@ def pool():
             )
             for s in setpoints
         )
-        equipment_html = "".join(
-            POOL_EQUIPMENT_CARD_TEMPLATE.format(
+        equipment_html = html_join(
+            frag("pool_equipment_card.html", 
                 key=e["key"],
                 label=e["label"],
                 status_label="On" if e["is_on"] else "Off",
@@ -3063,8 +2407,8 @@ def pool():
 
         # Schedule section: dropdown of real equipment devices to schedule,
         # plus the list of existing schedules.
-        device_options = "".join(
-            f'<option value="{e["key"]}" data-label="{e["label"]}">{e["label"]}</option>'
+        device_options = html_join(
+            f'<option value="{h(e["key"])}" data-label="{h(e["label"])}">{h(e["label"])}</option>'
             for e in equipment
         )
 
@@ -3073,8 +2417,8 @@ def pool():
         schedules.sort(key=lambda kv: (kv[1]["device_label"], kv[1]["on_time"]))
 
         if schedules:
-            schedule_rows = "".join(
-                POOL_SCHEDULE_ROW_TEMPLATE.format(
+            schedule_rows = html_join(
+                frag("pool_schedule_row.html", 
                     schedule_id=sid,
                     device_label=s["device_label"],
                     on_time=_format_time_12h_str(s["on_time"]),
@@ -3089,21 +2433,21 @@ def pool():
                 for sid, s in schedules
             )
         else:
-            schedule_rows = '<p class="empty-state">No schedules set up yet.</p>'
+            schedule_rows = Markup('<p class="empty-state">No schedules set up yet.</p>')
 
-        html = POOL_TEMPLATE.format(
+        html = render_template("pool.html", 
             system_name=snapshot["system_name"],
             online_badge=(
-                '<span class="online-badge online-yes">Online</span>' if snapshot["online"]
-                else '<span class="online-badge online-no">Offline</span>' if snapshot["online"] is False
+                Markup('<span class="online-badge online-yes">Online</span>') if snapshot["online"]
+                else Markup('<span class="online-badge online-no">Offline</span>') if snapshot["online"] is False
                 else ""
             ),
             error_banner="",
-            sensor_cards=sensor_html or '<p class="empty-state">No sensor readings available.</p>',
+            sensor_cards=sensor_html or Markup('<p class="empty-state">No sensor readings available.</p>'),
             setpoint_cards=setpoint_html,
-            equipment_cards=equipment_html or '<p class="empty-state">No controllable equipment found.</p>',
+            equipment_cards=equipment_html or Markup('<p class="empty-state">No controllable equipment found.</p>'),
             schedule_rows=schedule_rows,
-            device_options=device_options or '<option value="">No equipment available</option>',
+            device_options=device_options or Markup('<option value="">No equipment available</option>'),
             csrf_field=csrf_field(),
             sidebar=render_sidebar("/pool"),
         )
@@ -3113,11 +2457,11 @@ def pool():
         # attribute). Show the real error instead of a blank 500 page.
         print(f"[{datetime.datetime.now()}] /pool render error: "
               f"{type(e).__name__}: {e}", file=sys.stderr)
-        html = POOL_TEMPLATE.format(
+        html = render_template("pool.html", 
             system_name=PROPERTY_DISPLAY_NAME,
             online_badge="",
-            error_banner=f'<div class="error-banner">Error building pool page: '
-                          f'{h(type(e).__name__)}: {h(e)}</div>',
+            error_banner=Markup(f'<div class="error-banner">Error building pool page: '
+                                f'{h(type(e).__name__)}: {h(e)}</div>'),
             sensor_cards="",
             setpoint_cards="",
             equipment_cards="",
@@ -3230,7 +2574,7 @@ DEFAULT_DOOR_CHECK_OUT = "11:00"
 
 
 def _time_options_html(selected_value):
-    return "".join(
+    return html_join(
         f'<option value="{t}" {"selected" if t == selected_value else ""}>{format_time_12h(t)}</option>'
         for t in _TIME_OPTION_VALUES
     )
@@ -3275,20 +2619,20 @@ def doors():
         except Exception as e:
             guest_error = str(e)
 
-    lock_options = "".join(
-        f'<option value="{lk["device_id"]}" {"selected" if lk["device_id"] == selected_device_id else ""}>'
-        f'{lk["name"]} ({lk["home"]})</option>'
+    lock_options = html_join(
+        f'<option value="{h(lk["device_id"])}" {"selected" if lk["device_id"] == selected_device_id else ""}>'
+        f'{h(lk["name"])} ({h(lk["home"])})</option>'
         for lk in locks
     )
-    month_options = "".join(
+    month_options = html_join(
         f'<option value="{y}-{m:02d}" {"selected" if sel else ""}>{label}</option>'
         for y, m, label, sel in _month_options(year, month)
     )
 
     if guest_error:
-        guest_rows = f'<p class="empty-state">Couldn\'t load bookings: {guest_error}</p>'
+        guest_rows = Markup(f'<p class="empty-state">Couldn\'t load bookings: {h(guest_error)}</p>')
     elif not guests:
-        guest_rows = '<p class="empty-state">No guests arriving this month.</p>'
+        guest_rows = Markup('<p class="empty-state">No guests arriving this month.</p>')
     else:
         rows = []
         for g in guests:
@@ -3320,9 +2664,9 @@ def doors():
             else:
                 agreement_label, agreement_class = "Not signed", "status-off"
 
-            rows.append(DOORS_ROW_TEMPLATE.format(
-                first_name=h(g["first_name"]),
-                last_name=h(g["last_name"]),
+            rows.append(frag("doors_row.html", 
+                first_name=g["first_name"],
+                last_name=g["last_name"],
                 arrival_str=format_date(g["arrival"]),
                 departure_str=format_date(g["departure"]),
                 last4=last4,
@@ -3342,7 +2686,7 @@ def doors():
                 send_label="Already sent" if existing else "Send code",
                 csrf_field=csrf_field(),
             ))
-        guest_rows = "".join(rows)
+        guest_rows = html_join(rows)
 
     # All-codes audit section, independent of the month/lock filters above --
     # this is meant to show everything this app has ever sent, across all
@@ -3351,7 +2695,7 @@ def doors():
     lock_name_by_id = {lk["device_id"]: f'{lk["name"]} ({lk["home"]})' for lk in locks}
     all_codes = db_list_all_access_codes()
     if not all_codes:
-        all_codes_rows = '<p class="empty-state">No door codes have been sent yet.</p>'
+        all_codes_rows = Markup('<p class="empty-state">No door codes have been sent yet.</p>')
     else:
         code_rows = []
         for row in all_codes:
@@ -3360,9 +2704,9 @@ def doors():
             except (json.JSONDecodeError, TypeError):
                 schedule = None
             expired = _is_schedule_expired(schedule)
-            code_rows.append(ALL_CODES_ROW_TEMPLATE.format(
+            code_rows.append(frag("all_codes_row.html", 
                 lock_label=lock_name_by_id.get(row["device_id"], row["device_id"]),
-                guest_name=h(row["guest_name"] or "—"),
+                guest_name=row["guest_name"] or "—",
                 code=row["code"] or "—",
                 slot=row["slot"],
                 window_str=_format_schedule_window(schedule),
@@ -3372,11 +2716,11 @@ def doors():
                 device_id=row["device_id"],
                 csrf_field=csrf_field(),
             ))
-        all_codes_rows = "".join(code_rows)
+        all_codes_rows = html_join(code_rows)
 
-    html = DOORS_TEMPLATE.format(
-        error_banner=f'<div class="error-banner">{h(error)}</div>' if error else "",
-        lock_options=lock_options or '<option value="">No locks found</option>',
+    html = render_template("doors.html", 
+        error_banner=Markup(f'<div class="error-banner">{h(error)}</div>') if error else "",
+        lock_options=lock_options or Markup('<option value="">No locks found</option>'),
         month_options=month_options,
         default_checkin_options=_time_options_html(default_checkin),
         default_checkout_options=_time_options_html(default_checkout),
@@ -3490,716 +2834,6 @@ def doors_manual_add():
     # table below, same as any guest-sent code.
     _db_safe(db_record_access_code, device_id, slot, None, friendly_name, code, schedule)
     return redirect("/doors#all-codes")
-
-
-MANAGE_ROW_TEMPLATE = """
-      <tr class="{row_class}">
-        <td class="guest-name">{first_name}</td>
-        <td>{arrival_str}</td>
-        <td>{departure_str}</td>
-        <td>{nights} {nights_label}</td>
-        <td>{adults} adults</td>
-        <td>{platform}<br><span class="conf">{confirmation}</span></td>
-        <td>
-          <form method="POST" action="/manage/select">
-            {csrf_field}
-            <input type="hidden" name="booking_key" value="{booking_key}">
-            <button type="submit" class="select-btn" {button_disabled}>{button_label}</button>
-          </form>
-        </td>
-      </tr>
-"""
-
-MANAGE_TEMPLATE = """<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Manage — Villa Brushy Creek Welcome Screen</title>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/app.css?v=1">
-<style>
-  .wrap{{ max-width: 980px; }}
-  h1{{ font-family:'Fraunces', serif; font-weight:500; font-size: 34px;
-    color: var(--creek-deep); margin: 0 0 6px; }}
-  .subtitle{{ color:#77705C; margin: 0 0 28px; font-size:14px; }}
-  .mode-toggle{{ display:flex; gap:10px; margin: 20px 0 28px; }}
-  .mode-toggle form{{ margin:0; }}
-  .mode-btn{{
-    font-family:'Work Sans', sans-serif; font-size:14px; font-weight:500;
-    padding: 10px 20px; border-radius: 100px; border:1px solid #DCD4B8;
-    background:#fff; color: var(--bark); cursor:pointer;
-  }}
-  .mode-btn.mode-active{{
-    background: var(--creek); color: var(--limestone); border-color: var(--creek);
-  }}
-  .mode-explainer{{ font-size: 13px; color:#77705C; margin-bottom: 28px; }}
-  table{{ width:100%; border-collapse: collapse; background:#fff;
-    border-radius: 14px; overflow:hidden; border:1px solid #E2DBC5; }}
-  .table-scroll{{ overflow-x:auto; -webkit-overflow-scrolling:touch; }}
-  .table-scroll table{{ min-width: 640px; }}
-  th{{
-    text-align:left; font-size: 11px; text-transform:uppercase; letter-spacing:0.08em;
-    color:#8A7F63; padding: 14px 16px; border-bottom: 1px solid #E2DBC5; background:#FAF6E9;
-  }}
-  .conf{{ color:#9A9276; font-size:12px; }}
-  .manage-row-selected{{ background: #F3F0DD; }}
-  .select-btn{{
-    font-family:'Work Sans', sans-serif; font-size: 13px; font-weight:500;
-    padding: 8px 14px; border-radius: 100px; border:1px solid var(--clay);
-    background:#fff; color: var(--clay); cursor:pointer; white-space:nowrap;
-  }}
-  .select-btn[disabled]{{
-    border-color:#DCD4B8; color:#9A9276; cursor:default; background:#F3F0DD;
-  }}
-</style>
-</head>
-<body>
-<div class="app-shell">
-  {sidebar}
-  <main class="main-content">
-  <div class="wrap">
-  <h1>Upcoming Arrivals</h1>
-  <p class="subtitle">Last refreshed: {last_updated} · <a class="back-link" href="/refresh">Refresh now</a></p>
-  {error_banner}
-
-  <div class="mode-toggle">
-    <form method="POST" action="/manage/mode">
-      {csrf_field}
-      <input type="hidden" name="mode" value="auto">
-      <button type="submit" class="mode-btn {mode_auto_class}">Auto</button>
-    </form>
-    <form method="POST" action="/manage/mode">
-      {csrf_field}
-      <input type="hidden" name="mode" value="manual">
-      <button type="submit" class="mode-btn {mode_manual_class}">Manual</button>
-    </form>
-  </div>
-  <p class="mode-explainer">
-    <b>Auto</b> always shows whoever's arriving soonest.
-    <b>Manual</b> keeps showing whichever guest you pick below, even after the
-    hourly refresh, until you pick someone else or switch back to Auto.
-  </p>
-
-  <div class="table-scroll">
-  <table>
-    <thead>
-      <tr>
-        <th>Guest</th><th>Arrival</th><th>Departure</th><th>Stay</th>
-        <th>Party</th><th>Booking</th><th></th>
-      </tr>
-    </thead>
-    <tbody>
-      {rows}
-    </tbody>
-  </table>
-  </div>
-
-  <p class="footer-note">Showing the next {upcoming_count_label} upcoming bookings. This page has no login — don't share the URL publicly.</p>
-  </div>
-  </main>
-</div>
-</body>
-</html>
-"""
-
-
-CLEANING_CHECKBOX_TEMPLATE = """
-        <li class="task-row {done_class}">
-          <form method="POST" action="/cleaning/toggle">
-            {csrf_field}
-            <input type="hidden" name="booking_key" value="{booking_key}">
-            <input type="hidden" name="task_name" value="{task_name}">
-            <label class="task-label">
-              <input type="checkbox" {checked} onchange="this.form.submit()">
-              <span>{task_name}</span>
-            </label>
-          </form>
-        </li>
-"""
-
-CLEANING_CARD_TEMPLATE = """
-  <div class="cleaning-card {card_class}" id="{booking_key}">
-    <div class="cleaning-card-header">
-      <div>
-        <div class="cleaning-guest">{first_name}</div>
-        <div class="cleaning-dates">Arrives {arrival_str} · Departs {departure_str}</div>
-      </div>
-      <div class="cleaning-progress-wrap">
-        {ready_badge}
-        <div class="cleaning-progress-label">{done_count}/{total} done</div>
-        <div class="progress-bar"><div class="progress-fill" style="width:{progress_pct}%"></div></div>
-      </div>
-    </div>
-    <ul class="task-list">
-      {checkbox_rows}
-    </ul>
-    <form method="POST" action="/cleaning/reset">
-      {csrf_field}
-      <input type="hidden" name="booking_key" value="{booking_key}">
-      <button type="submit" class="reset-btn">Reset checklist</button>
-    </form>
-  </div>
-"""
-
-CLEANING_TEMPLATE = """<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Cleaning Checklist — Villa Brushy Creek</title>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/app.css?v=1">
-<style>
-  .wrap{{ max-width: 900px; }}
-  h1{{ font-family:'Fraunces', serif; font-weight:500; font-size: 34px;
-    color: var(--creek-deep); margin: 0 0 6px; }}
-  .subtitle{{ color:#77705C; margin: 0 0 28px; font-size:14px; }}
-  .cleaning-card{{
-    background:#fff; border:1px solid #E2DBC5; border-radius:16px;
-    padding: 22px 24px; margin-bottom: 20px;
-  }}
-  .cleaning-card-done{{ border-color: var(--sage); background: #F7F9F2; }}
-  .cleaning-card-header{{
-    display:flex; justify-content:space-between; align-items:flex-start;
-    gap: 20px; flex-wrap: wrap; margin-bottom: 16px;
-  }}
-  .cleaning-guest{{ font-family:'Fraunces', serif; font-weight:500; font-size: 20px; color: var(--creek-deep); }}
-  .cleaning-dates{{ font-size: 13px; color:#77705C; margin-top: 2px; }}
-  .cleaning-progress-wrap{{ text-align:right; min-width: 160px; }}
-  .ready-badge{{
-    display:inline-block; background: var(--sage); color:#fff; font-size: 12px;
-    font-weight:600; padding: 3px 10px; border-radius: 100px; margin-bottom:6px;
-  }}
-  .cleaning-progress-label{{ font-size: 12px; color:#8A7F63; margin-bottom: 6px; }}
-  .progress-bar{{ width: 160px; height: 6px; background:#EFEAD9; border-radius: 100px; overflow:hidden; }}
-  .progress-fill{{ height:100%; background: var(--clay); transition: width 0.2s ease; }}
-  .cleaning-card-done .progress-fill{{ background: var(--sage); }}
-  .task-list{{ list-style:none; margin: 0 0 16px; padding:0; border-top:1px solid #EFEAD9; }}
-  .task-row{{ border-bottom: 1px solid #EFEAD9; }}
-  .task-row form{{ margin:0; }}
-  .task-label{{
-    display:flex; align-items:center; gap: 12px; padding: 11px 2px;
-    font-size: 14px; cursor:pointer;
-  }}
-  .task-label input[type=checkbox]{{ width:18px; height:18px; accent-color: var(--sage); cursor:pointer; }}
-  .task-row.task-done .task-label span{{ color:#9A9276; text-decoration: line-through; }}
-  .reset-btn{{
-    font-family:'Work Sans', sans-serif; font-size: 12px; color:#8A7F63;
-    background:none; border:1px solid #DCD4B8; border-radius:100px;
-    padding: 6px 14px; cursor:pointer;
-  }}
-  .reset-btn:hover{{ border-color: var(--clay); color: var(--clay); }}
-  .footer-note{{ margin-top: 8px; font-size: 12px; color:#9A9276; }}
-</style>
-</head>
-<body>
-<div class="app-shell">
-  {sidebar}
-  <main class="main-content">
-  <div class="wrap">
-  <h1>Cleaning Checklist</h1>
-  <p class="subtitle">Last refreshed: {last_updated} · <a class="back-link" href="/refresh">Refresh now</a></p>
-  {error_banner}
-
-  {cards}
-
-  <p class="footer-note">Checklists are per booking and reset automatically once a booking is no longer upcoming. Checking a box saves immediately — no need to submit anything. This page has no login — don't share the URL publicly.</p>
-  </div>
-  </main>
-</div>
-</body>
-</html>
-"""
-
-
-POOL_SENSOR_CARD_TEMPLATE = """
-    <div class="sensor-card">
-      <div class="sensor-label">{label}</div>
-      <div class="sensor-value">{value}°</div>
-    </div>
-"""
-
-POOL_SETPOINT_CARD_TEMPLATE = """
-  <div class="setpoint-card">
-    <div class="setpoint-header">
-      <div class="setpoint-label">{label}</div>
-      <span class="status-badge {status_class}">{status_label}</span>
-    </div>
-    <form method="POST" action="/pool/set_temperature" class="setpoint-form">
-      {csrf_field}
-      <input type="hidden" name="device_key" value="{key}">
-      <input type="number" name="temperature" value="{value}" class="temp-input">
-      <button type="submit" class="temp-set-btn">Set</button>
-    </form>
-  </div>
-"""
-
-POOL_EQUIPMENT_CARD_TEMPLATE = """
-  <div class="equipment-card {card_class}">
-    <div class="equipment-info">
-      <div class="equipment-label">{label}</div>
-      <span class="status-badge {status_class}">{status_label}</span>
-    </div>
-    <form method="POST" action="/pool/toggle">
-      {csrf_field}
-      <input type="hidden" name="device_key" value="{key}">
-      <button type="submit" class="toggle-btn">{button_label}</button>
-    </form>
-  </div>
-"""
-
-POOL_SCHEDULE_ROW_TEMPLATE = """
-  <div class="schedule-row {row_class}">
-    <div class="schedule-info">
-      <div class="schedule-device">{device_label}</div>
-      <div class="schedule-times">{on_time} &rarr; {off_time} · {days_label}</div>
-    </div>
-    <span class="status-badge {status_class}">{status_label}</span>
-    <form method="POST" action="/pool/schedule/toggle" class="schedule-btn-form">
-      {csrf_field}
-      <input type="hidden" name="schedule_id" value="{schedule_id}">
-      <button type="submit" class="toggle-btn">{toggle_label}</button>
-    </form>
-    <form method="POST" action="/pool/schedule/delete" class="schedule-btn-form">
-      {csrf_field}
-      <input type="hidden" name="schedule_id" value="{schedule_id}">
-      <button type="submit" class="delete-btn">Delete</button>
-    </form>
-  </div>
-"""
-
-POOL_TEMPLATE = """<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Pool Control — {system_name}</title>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/app.css?v=1">
-<style>
-  body{{ font-size: 14px; }}
-  .wrap{{ max-width: 900px; }}
-  h1{{ font-family:'Fraunces', serif; font-weight:500; font-size: 24px;
-    color: var(--creek-deep); margin: 8px 0 4px; display:inline-block; }}
-  .subtitle{{ color:#77705C; margin: 0 0 16px; font-size:12px; }}
-  .back-link{{ font-size: 12px; color: var(--creek); text-decoration:none; }}
-  .online-badge{{
-    display:inline-block; font-size: 11px; font-weight:600; padding: 2px 8px;
-    border-radius: 100px; margin-left: 10px; vertical-align: middle;
-  }}
-  .online-yes{{ background: var(--sage); color:#fff; }}
-  .online-no{{ background:#C1652F; color:#fff; }}
-  .error-banner{{
-    background:#FBEAE0; border:1px solid #E8B99B; color:#8A3D14;
-    padding:10px 14px; border-radius:10px; margin-bottom:14px; font-size:13px;
-  }}
-  .empty-state{{ text-align:center; color:#9A9276; padding: 14px; font-size: 13px; }}
-  .section-title{{
-    font-family:'Fraunces', serif; font-weight:500; font-size: 15px;
-    color: var(--creek-deep); margin: 18px 0 8px;
-  }}
-  .sensor-grid{{ display:flex; gap:10px; flex-wrap:wrap; }}
-  .sensor-card{{
-    background:#fff; border:1px solid #E2DBC5; border-radius:12px;
-    padding: 10px 16px; min-width: 90px; text-align:center;
-  }}
-  .sensor-label{{ font-size: 10px; text-transform:uppercase; letter-spacing:0.06em; color:#8A7F63; margin-bottom:3px; }}
-  .sensor-value{{ font-family:'Fraunces', serif; font-weight:500; font-size: 20px; color: var(--creek-deep); }}
-  .setpoint-grid{{ display:grid; grid-template-columns: 1fr 1fr; gap:10px; }}
-  .setpoint-card{{ background:#fff; border:1px solid #E2DBC5; border-radius:12px; padding: 10px 12px; }}
-  .setpoint-header{{ display:flex; justify-content:space-between; align-items:center; margin-bottom: 8px; }}
-  .setpoint-label{{ font-family:'Fraunces', serif; font-weight:500; font-size: 13px; color: var(--creek-deep); }}
-  .setpoint-form{{ display:flex; gap:6px; margin:0; }}
-  .temp-input{{
-    width: 56px; font-family:'Work Sans', sans-serif; font-size: 13px;
-    padding: 5px 6px; border-radius: 7px; border:1px solid #DCD4B8;
-  }}
-  .temp-set-btn{{
-    font-family:'Work Sans', sans-serif; font-size: 11px; font-weight:500;
-    padding: 5px 12px; border-radius: 100px; border:1px solid var(--creek);
-    background: var(--creek); color:#fff; cursor:pointer;
-  }}
-  .temp-set-btn:hover{{ background: var(--creek-deep); }}
-  .equipment-grid{{ display:grid; grid-template-columns: repeat(3, 1fr); gap:8px; }}
-  .equipment-card{{
-    background:#fff; border:1px solid #E2DBC5; border-radius:12px;
-    padding: 9px 11px; display:flex; justify-content:space-between; align-items:center; gap:8px;
-  }}
-  .equipment-card-on{{ border-color: var(--sage); background:#F7F9F2; }}
-  .equipment-label{{ font-size: 12px; font-weight:500; color: var(--bark); margin-bottom: 3px; }}
-  .status-badge{{
-    display:inline-block; font-size: 10px; font-weight:600; padding: 1px 7px;
-    border-radius: 100px;
-  }}
-  .toggle-btn{{
-    font-family:'Work Sans', sans-serif; font-size: 11px; font-weight:500;
-    padding: 5px 10px; border-radius: 100px; border:1px solid #DCD4B8;
-    background:#fff; color: var(--bark); cursor:pointer; white-space:nowrap;
-  }}
-  .toggle-btn:hover{{ border-color: var(--clay); color: var(--clay); }}
-  .footer-note{{ margin-top: 18px; font-size: 11px; color:#9A9276; }}
-  .schedule-row{{
-    background:#fff; border:1px solid #E2DBC5; border-radius:12px;
-    padding: 9px 12px; display:flex; align-items:center; gap:10px; margin-bottom:8px;
-  }}
-  .schedule-row-disabled{{ opacity: 0.55; }}
-  .schedule-info{{ flex:1; min-width:0; }}
-  .schedule-device{{ font-size: 13px; font-weight:500; color: var(--bark); }}
-  .schedule-times{{ font-size: 11px; color:#77705C; margin-top:2px; }}
-  .schedule-btn-form{{ margin:0; }}
-  .delete-btn{{
-    font-family:'Work Sans', sans-serif; font-size: 11px; font-weight:500;
-    padding: 5px 10px; border-radius: 100px; border:1px solid #E8B99B;
-    background:#fff; color:#8A3D14; cursor:pointer; white-space:nowrap;
-  }}
-  .delete-btn:hover{{ background:#FBEAE0; }}
-  .add-schedule-card{{
-    background:#fff; border:1px solid #E2DBC5; border-radius:12px;
-    padding: 14px; margin-top: 10px;
-  }}
-  .add-schedule-form{{ display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end; }}
-  .form-field select, .form-field input[type=time]{{
-    font-family:'Work Sans', sans-serif; font-size: 13px;
-    padding: 6px 8px; border-radius: 7px; border:1px solid #DCD4B8;
-  }}
-  .days-picker{{ display:flex; gap:4px; }}
-  .day-chip{{ position:relative; }}
-  .day-chip input{{ position:absolute; opacity:0; width:100%; height:100%; margin:0; cursor:pointer; }}
-  .day-chip span{{
-    display:inline-flex; align-items:center; justify-content:center;
-    width: 30px; height: 30px; border-radius: 8px; border:1px solid #DCD4B8;
-    font-size: 11px; color:#77705C; cursor:pointer;
-  }}
-  .day-chip input:checked + span{{ background: var(--creek); border-color: var(--creek); color:#fff; }}
-  .add-schedule-btn{{
-    font-family:'Work Sans', sans-serif; font-size: 12px; font-weight:500;
-    padding: 7px 16px; border-radius: 100px; border:1px solid var(--creek);
-    background: var(--creek); color:#fff; cursor:pointer;
-  }}
-  .add-schedule-btn:hover{{ background: var(--creek-deep); }}
-  @media (max-width: 700px){{
-    .equipment-grid{{ grid-template-columns: repeat(2, 1fr); }}
-  }}
-  @media (max-width: 480px){{
-    .setpoint-grid, .equipment-grid{{ grid-template-columns: 1fr; }}
-  }}
-</style>
-</head>
-<body>
-<div class="app-shell">
-  {sidebar}
-  <main class="main-content">
-  <div class="wrap">
-  <div><h1>{system_name}</h1>{online_badge}</div>
-  <p class="subtitle"><a class="back-link" href="/pool">Refresh now</a></p>
-  {error_banner}
-
-  <h2 class="section-title">Readings</h2>
-  <div class="sensor-grid">
-    {sensor_cards}
-  </div>
-
-  <h2 class="section-title">Temperature</h2>
-  <div class="setpoint-grid">
-    {setpoint_cards}
-  </div>
-
-  <h2 class="section-title">Equipment</h2>
-  <div class="equipment-grid">
-    {equipment_cards}
-  </div>
-
-  <h2 class="section-title" id="schedule">Schedules</h2>
-  <div>
-    {schedule_rows}
-  </div>
-  <div class="add-schedule-card">
-    <form method="POST" action="/pool/schedule/add" class="add-schedule-form"
-          onsubmit="document.getElementById('device_label_hidden').value = document.getElementById('device_key_select').selectedOptions[0].dataset.label || '';">
-      {csrf_field}
-      <div class="form-field">
-        <label>Device</label>
-        <select name="device_key" id="device_key_select" required>
-          {device_options}
-        </select>
-        <input type="hidden" name="device_label" id="device_label_hidden">
-      </div>
-      <div class="form-field">
-        <label>Turn on</label>
-        <input type="time" name="on_time" value="08:00" required>
-      </div>
-      <div class="form-field">
-        <label>Turn off</label>
-        <input type="time" name="off_time" value="18:00" required>
-      </div>
-      <div class="form-field">
-        <label>Days</label>
-        <div class="days-picker">
-          <label class="day-chip"><input type="checkbox" name="days" value="0" checked><span>M</span></label>
-          <label class="day-chip"><input type="checkbox" name="days" value="1" checked><span>T</span></label>
-          <label class="day-chip"><input type="checkbox" name="days" value="2" checked><span>W</span></label>
-          <label class="day-chip"><input type="checkbox" name="days" value="3" checked><span>T</span></label>
-          <label class="day-chip"><input type="checkbox" name="days" value="4" checked><span>F</span></label>
-          <label class="day-chip"><input type="checkbox" name="days" value="5" checked><span>S</span></label>
-          <label class="day-chip"><input type="checkbox" name="days" value="6" checked><span>S</span></label>
-        </div>
-      </div>
-      <button type="submit" class="add-schedule-btn">Add schedule</button>
-    </form>
-  </div>
-
-  <p class="footer-note">Pool state is fetched live on every visit to this page — it isn't cached. Schedules run in the background continuously, whether or not this page is open, and are saved to disk so they survive restarts and deploys. This page has no login — don't share the URL publicly.</p>
-  </div>
-  </main>
-</div>
-</body>
-</html>
-"""
-
-
-DOORS_ROW_TEMPLATE = """
-      <tr>
-        <td class="guest-name">{first_name} {last_name}</td>
-        <td>{arrival_str}</td>
-        <td>{departure_str}</td>
-        <td>{last4}</td>
-        <td><span class="status-badge {deposit_class}">{deposit_label}</span></td>
-        <td><span class="status-badge {agreement_class}">{agreement_label}</span></td>
-        <td><span class="status-badge {status_class}">{status_label}</span></td>
-        <td>
-          <form method="POST" action="/doors/send" class="row-send-form">
-            {csrf_field}
-            <input type="hidden" name="device_id" value="{selected_device_id_for_row}">
-            <input type="hidden" name="booking_key" value="{booking_key}">
-            <input type="hidden" name="year" value="{year_for_row}">
-            <input type="hidden" name="month" value="{month_for_row}">
-            <select name="check_in_time" class="row-time-select" {send_disabled}>
-              {checkin_options}
-            </select>
-            <span class="time-arrow">&rarr;</span>
-            <select name="check_out_time" class="row-time-select" {send_disabled}>
-              {checkout_options}
-            </select>
-            <button type="submit" class="select-btn" {send_disabled}>{send_label}</button>
-          </form>
-        </td>
-      </tr>
-"""
-
-ALL_CODES_ROW_TEMPLATE = """
-      <tr class="{row_class}">
-        <td>{lock_label}</td>
-        <td class="guest-name">{guest_name}</td>
-        <td>{code}</td>
-        <td>{slot}</td>
-        <td>{window_str}</td>
-        <td><span class="status-badge {expired_class}">{expired_label}</span></td>
-        <td>
-          <form method="POST" action="/doors/remove" onsubmit="return confirm('Remove this door code?');">
-            {csrf_field}
-            <input type="hidden" name="device_id" value="{device_id}">
-            <input type="hidden" name="slot" value="{slot}">
-            <button type="submit" class="delete-btn">Remove</button>
-          </form>
-        </td>
-      </tr>
-"""
-
-DOORS_TEMPLATE = """<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Door Codes — Villa Brushy Creek</title>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/app.css?v=1">
-<style>
-  .wrap{{ max-width: 980px; }}
-  h1{{ font-family:'Fraunces', serif; font-weight:500; font-size: 34px;
-    color: var(--creek-deep); margin: 0 0 6px; }}
-  .subtitle{{ color:#77705C; margin: 0 0 20px; font-size:14px; }}
-  .controls{{ display:flex; gap:14px; margin: 20px 0 24px; flex-wrap:wrap; align-items:center; }}
-  .controls form{{ margin:0; display:flex; gap:14px; align-items:center; flex-wrap:wrap; }}
-  .controls select{{
-    font-family:'Work Sans', sans-serif; font-size: 14px;
-    padding: 9px 12px; border-radius: 9px; border:1px solid #DCD4B8; background:#fff;
-  }}
-  .controls-label{{ font-size: 12px; color:#8A7F63; margin-right: -6px; }}
-  .time-arrow{{ color:#9A9276; font-size: 13px; }}
-  table{{ width:100%; border-collapse: collapse; background:#fff;
-    border-radius: 14px; overflow:hidden; border:1px solid #E2DBC5; }}
-  .table-scroll{{ overflow-x:auto; -webkit-overflow-scrolling:touch; margin-bottom: 20px; }}
-  .table-scroll table{{ min-width: 900px; }}
-  th{{
-    text-align:left; font-size: 11px; text-transform:uppercase; letter-spacing:0.08em;
-    color:#8A7F63; padding: 14px 16px; border-bottom: 1px solid #E2DBC5; background:#FAF6E9;
-  }}
-  .status-badge{{
-    display:inline-block; font-size: 11px; font-weight:600; padding: 2px 9px;
-    border-radius: 100px;
-  }}
-  .row-send-form{{ display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin:0; }}
-  .row-time-select{{
-    font-family:'Work Sans', sans-serif; font-size: 12px;
-    padding: 6px 8px; border-radius: 7px; border:1px solid #DCD4B8; background:#fff;
-  }}
-  .select-btn{{
-    font-family:'Work Sans', sans-serif; font-size: 13px; font-weight:500;
-    padding: 8px 14px; border-radius: 100px; border:1px solid var(--clay);
-    background:#fff; color: var(--clay); cursor:pointer; white-space:nowrap;
-  }}
-  .select-btn[disabled]{{
-    border-color:#DCD4B8; color:#9A9276; cursor:default; background:#F3F0DD;
-  }}
-  .delete-btn{{
-    font-family:'Work Sans', sans-serif; font-size: 12px; color:#8A7F63;
-    background:none; border:1px solid #DCD4B8; border-radius:100px;
-    padding: 6px 14px; cursor:pointer;
-  }}
-  .expired-row{{ opacity: 0.6; }}
-  .section-title{{
-    font-family:'Fraunces', serif; font-weight:500; font-size: 20px;
-    color: var(--creek-deep); margin: 36px 0 14px;
-  }}
-  .manual-code-card{{
-    background:#fff; border:1px solid #E2DBC5; border-radius:14px;
-    padding: 18px 20px; margin-top: 8px;
-  }}
-  .manual-code-title{{
-    font-family:'Fraunces', serif; font-weight:500; font-size: 17px; color: var(--creek-deep); margin-bottom: 4px;
-  }}
-  .manual-code-hint{{ font-size: 13px; color:#77705C; margin: 0 0 16px; }}
-  .manual-code-form{{ display:flex; flex-wrap:wrap; gap: 14px; align-items:flex-end; }}
-  .form-field select, .form-field input[type=text], .form-field input[type=date], .form-field input[type=time]{{
-    font-family:'Work Sans', sans-serif; font-size: 13px;
-    padding: 8px 10px; border-radius: 7px; border:1px solid #DCD4B8;
-  }}
-  .checkbox-label{{
-    display:flex; align-items:center; gap:8px; font-size: 13px; color: var(--bark);
-    text-transform:none; letter-spacing:normal; cursor:pointer; padding-bottom: 8px;
-  }}
-  .checkbox-label input{{ width:16px; height:16px; accent-color: var(--sage); }}
-  .manual-date-range{{ display:flex; gap:14px; flex-wrap:wrap; }}
-  .manual-date-range .form-field{{ flex-direction:row; align-items:center; gap:6px; }}
-  .manual-date-range input[type=date]{{ width: 140px; }}
-  .manual-date-range input[type=time]{{ width: 90px; }}
-  .add-schedule-btn{{
-    font-family:'Work Sans', sans-serif; font-size: 12px; font-weight:500;
-    padding: 9px 18px; border-radius: 100px; border:1px solid var(--creek);
-    background: var(--creek); color:#fff; cursor:pointer;
-  }}
-  .add-schedule-btn:hover{{ background: var(--creek-deep); }}
-</style>
-</head>
-<body>
-<div class="app-shell">
-  {sidebar}
-  <main class="main-content">
-  <div class="wrap">
-  <h1>Door Codes</h1>
-  <p class="subtitle">Sends a code (last 4 of the guest's phone) valid only for their stay dates.</p>
-  {error_banner}
-
-  <form method="GET" action="/doors" class="controls">
-    <input type="hidden" name="year" id="year-field" value="{selected_year}">
-    <input type="hidden" name="month" id="month-field" value="{selected_month}">
-    <select name="device_id" onchange="this.form.submit()">
-      {lock_options}
-    </select>
-    <select onchange="
-      var v=this.value.split('-');
-      document.getElementById('year-field').value=v[0];
-      document.getElementById('month-field').value=v[1];
-      this.form.submit();">
-      {month_options}
-    </select>
-    <span class="controls-label">Default access window:</span>
-    <select name="default_checkin" onchange="this.form.submit()">
-      {default_checkin_options}
-    </select>
-    <span class="time-arrow">&rarr;</span>
-    <select name="default_checkout" onchange="this.form.submit()">
-      {default_checkout_options}
-    </select>
-  </form>
-
-  <div class="table-scroll">
-  <table>
-    <thead>
-      <tr>
-        <th>Guest</th><th>Arrival</th><th>Departure</th><th>Phone (last 4)</th><th>Deposit</th><th>Agreement</th><th>Status</th><th>Access window</th>
-      </tr>
-    </thead>
-    <tbody>
-      {guest_rows}
-    </tbody>
-  </table>
-  </div>
-
-  <div class="manual-code-card">
-    <div class="manual-code-title">Add a code manually</div>
-    <p class="manual-code-hint">For anyone who isn't a guest -- a cleaner, a contractor, yourself. Not tied to any booking.</p>
-    <form method="POST" action="/doors/manual_add" class="manual-code-form" id="manual-code-form">
-      {csrf_field}
-      <div class="form-field">
-        <label>Lock</label>
-        <select name="device_id" required>
-          {lock_options}
-        </select>
-      </div>
-      <div class="form-field">
-        <label>Name</label>
-        <input type="text" name="name" maxlength="14" placeholder="e.g. Cleaner" required>
-      </div>
-      <div class="form-field">
-        <label>Code</label>
-        <input type="text" name="code" inputmode="numeric" pattern="[0-9]{{4,8}}" maxlength="8" placeholder="4-8 digits" required>
-      </div>
-      <div class="form-field never-expire-field">
-        <label class="checkbox-label">
-          <input type="checkbox" name="never_expire" id="never_expire_check"
-                 onchange="document.getElementById('manual-date-range').style.display = this.checked ? 'none' : 'flex';">
-          Never expires
-        </label>
-      </div>
-      <div class="manual-date-range" id="manual-date-range">
-        <div class="form-field">
-          <label>Starts</label>
-          <input type="date" name="start_date">
-          <input type="time" name="start_time" value="00:00">
-        </div>
-        <div class="form-field">
-          <label>Ends</label>
-          <input type="date" name="end_date">
-          <input type="time" name="end_time" value="23:59">
-        </div>
-      </div>
-      <button type="submit" class="add-schedule-btn">Add code</button>
-    </form>
-  </div>
-
-  <h2 class="section-title" id="all-codes">All Door Codes</h2>
-  <div class="table-scroll">
-  <table>
-    <thead>
-      <tr>
-        <th>Lock</th><th>Guest</th><th>Code</th><th>Slot</th><th>Valid window</th><th>Status</th><th></th>
-      </tr>
-    </thead>
-    <tbody>
-      {all_codes_rows}
-    </tbody>
-  </table>
-  </div>
-
-  <p class="footer-note">"Sent" only reflects codes this app itself has created -- Kwikset's API has no way to read codes back off the physical lock, so this can't detect codes added via the Kwikset app or keypad. Each guest's access window defaults to the setting above but can be changed per guest before sending. "Expired" is based on the code's own valid-until time, not a live check against the lock -- Kwikset's API can't confirm whether an expired code has actually stopped working, only that its scheduled window has passed. This page has no login — don't share the URL publicly, since it can create real door access codes.</p>
-  </div>
-  </main>
-</div>
-</body>
-</html>
-"""
 
 
 # Load persisted state from disk before anything else starts, so the

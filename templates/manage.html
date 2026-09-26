@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Manage — Villa Brushy Creek Welcome Screen</title>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/app.css?v=1">
+<style>
+  .wrap{ max-width: 980px; }
+  h1{ font-family:'Fraunces', serif; font-weight:500; font-size: 34px;
+    color: var(--creek-deep); margin: 0 0 6px; }
+  .subtitle{ color:#77705C; margin: 0 0 28px; font-size:14px; }
+  .mode-toggle{ display:flex; gap:10px; margin: 20px 0 28px; }
+  .mode-toggle form{ margin:0; }
+  .mode-btn{
+    font-family:'Work Sans', sans-serif; font-size:14px; font-weight:500;
+    padding: 10px 20px; border-radius: 100px; border:1px solid #DCD4B8;
+    background:#fff; color: var(--bark); cursor:pointer;
+  }
+  .mode-btn.mode-active{
+    background: var(--creek); color: var(--limestone); border-color: var(--creek);
+  }
+  .mode-explainer{ font-size: 13px; color:#77705C; margin-bottom: 28px; }
+  table{ width:100%; border-collapse: collapse; background:#fff;
+    border-radius: 14px; overflow:hidden; border:1px solid #E2DBC5; }
+  .table-scroll{ overflow-x:auto; -webkit-overflow-scrolling:touch; }
+  .table-scroll table{ min-width: 640px; }
+  th{
+    text-align:left; font-size: 11px; text-transform:uppercase; letter-spacing:0.08em;
+    color:#8A7F63; padding: 14px 16px; border-bottom: 1px solid #E2DBC5; background:#FAF6E9;
+  }
+  .conf{ color:#9A9276; font-size:12px; }
+  .manage-row-selected{ background: #F3F0DD; }
+  .select-btn{
+    font-family:'Work Sans', sans-serif; font-size: 13px; font-weight:500;
+    padding: 8px 14px; border-radius: 100px; border:1px solid var(--clay);
+    background:#fff; color: var(--clay); cursor:pointer; white-space:nowrap;
+  }
+  .select-btn[disabled]{
+    border-color:#DCD4B8; color:#9A9276; cursor:default; background:#F3F0DD;
+  }
+</style>
+</head>
+<body>
+<div class="app-shell">
+  {{ sidebar }}
+  <main class="main-content">
+  <div class="wrap">
+  <h1>Upcoming Arrivals</h1>
+  <p class="subtitle">Last refreshed: {{ last_updated }} · <a class="back-link" href="/refresh">Refresh now</a></p>
+  {{ error_banner }}
+
+  <div class="mode-toggle">
+    <form method="POST" action="/manage/mode">
+      {{ csrf_field }}
+      <input type="hidden" name="mode" value="auto">
+      <button type="submit" class="mode-btn {{ mode_auto_class }}">Auto</button>
+    </form>
+    <form method="POST" action="/manage/mode">
+      {{ csrf_field }}
+      <input type="hidden" name="mode" value="manual">
+      <button type="submit" class="mode-btn {{ mode_manual_class }}">Manual</button>
+    </form>
+  </div>
+  <p class="mode-explainer">
+    <b>Auto</b> always shows whoever's arriving soonest.
+    <b>Manual</b> keeps showing whichever guest you pick below, even after the
+    hourly refresh, until you pick someone else or switch back to Auto.
+  </p>
+
+  <div class="table-scroll">
+  <table>
+    <thead>
+      <tr>
+        <th>Guest</th><th>Arrival</th><th>Departure</th><th>Stay</th>
+        <th>Party</th><th>Booking</th><th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {{ rows }}
+    </tbody>
+  </table>
+  </div>
+
+  <p class="footer-note">Showing the next {{ upcoming_count_label }} upcoming bookings. This page has no login — don't share the URL publicly.</p>
+  </div>
+  </main>
+</div>
+</body>
+</html>

@@ -1,0 +1,18 @@
+
+  <div class="schedule-row {{ row_class }}">
+    <div class="schedule-info">
+      <div class="schedule-device">{{ device_label }}</div>
+      <div class="schedule-times">{{ on_time }} &rarr; {{ off_time }} · {{ days_label }}</div>
+    </div>
+    <span class="status-badge {{ status_class }}">{{ status_label }}</span>
+    <form method="POST" action="/pool/schedule/toggle" class="schedule-btn-form">
+      {{ csrf_field }}
+      <input type="hidden" name="schedule_id" value="{{ schedule_id }}">
+      <button type="submit" class="toggle-btn">{{ toggle_label }}</button>
+    </form>
+    <form method="POST" action="/pool/schedule/delete" class="schedule-btn-form">
+      {{ csrf_field }}
+      <input type="hidden" name="schedule_id" value="{{ schedule_id }}">
+      <button type="submit" class="delete-btn">Delete</button>
+    </form>
+  </div>

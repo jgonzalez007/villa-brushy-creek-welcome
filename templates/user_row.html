@@ -1,0 +1,20 @@
+
+      <tr>
+        <td class="guest-name">{{ username }}{{ self_marker }}</td>
+        <td><span class="status-badge {{ status_class }}">{{ status_label }}</span></td>
+        <td>
+          <form method="POST" action="/users/reset_password" class="row-send-form">
+            {{ csrf_field }}
+            <input type="hidden" name="user_id" value="{{ user_id }}">
+            <input type="password" name="password" placeholder="New password" class="row-time-select" required>
+            <button type="submit" class="select-btn">Set password</button>
+          </form>
+        </td>
+        <td>
+          <form method="POST" action="/users/delete" onsubmit="return confirm('Remove this user?');">
+            {{ csrf_field }}
+            <input type="hidden" name="user_id" value="{{ user_id }}">
+            <button type="submit" class="delete-btn" {{ delete_disabled }}>Remove</button>
+          </form>
+        </td>
+      </tr>
