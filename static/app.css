@@ -87,6 +87,50 @@
 }
 
 
+/* --- Warm palette, for guest-facing pages ------------------------- */
+/* The admin tool is dark. The welcome screen and its error fallback are
+   the only things a GUEST sees on arrival, and hospitality reads warm,
+   so those two opt back into the original Hill Country palette with
+   class="theme-warm" on <html>.
+
+   This is the whole revert: because every rule in those templates now
+   reads a token, re-pointing the tokens re-themes the page. Nothing
+   below this block, and nothing in welcome.html, needed to change. */
+.theme-warm{
+  --rail:        #142B29;
+  --bg:          #EFEAD9;
+  --surface:     #FFFFFF;
+  --surface-2:   #FAF6E9;
+  --surface-3:   #DCD4B8;
+
+  --border:      #E2DBC5;
+  --border-soft: #EFEAD9;
+
+  --text:        #2A2018;
+  --text-dim:    #77705C;
+  --text-faint:  #8A7F63;
+
+  /* Hover DARKENS on a light background -- the inverse of the dark
+     theme, where it brightens. */
+  --accent:        #1F3F3D;
+  --accent-hover:  #142B29;
+  --on-accent:     #FFFFFF;
+
+  --sage:        #7C8B65;
+  --clay:        #C1652F;
+  --on-sage:     #FFFFFF;
+
+  --fill-from:   #1F3F3D;
+  --fill-to:     #142B29;
+
+  --danger-bg:     #FBEAE0;
+  --danger-border: #E8B99B;
+  --danger-text:   #8A3D14;
+
+  color-scheme: light;
+}
+
+
 /* --- Reset and document ------------------------------------------- */
 *{ box-sizing: border-box; }
 

@@ -1132,13 +1132,15 @@ def generate_wifi_qr_data_uri():
     qr = qrcode.QRCode(border=2, box_size=8)
     qr.add_data(payload)
     qr.make(fit=True)
-    # Deliberately NOT themed, and deliberately not inverted for the dark
-    # UI. Scanners expect dark modules on a light field; light-on-dark QR
-    # codes fail outright on a good number of phone cameras. A guest who
-    # can't join the Wi-Fi is a worse outcome than a white tile on a dark
-    # page, so this stays maximum-contrast black on white and the card
-    # around it is styled to make that look intentional.
-    img = qr.make_image(fill_color="#000000", back_color="#FFFFFF")
+    # The QR is only ever shown on the welcome screen, which uses the warm
+    # palette, so these match it rather than being tokenised -- a PNG is
+    # generated in Python and cannot read a CSS variable.
+    #
+    # Whatever they are, they must stay DARK modules on a LIGHT field.
+    # Scanners expect that polarity and light-on-dark QR codes fail
+    # outright on a good number of phone cameras, so this must not be
+    # inverted to suit a dark background.
+    img = qr.make_image(fill_color="#142B29", back_color="#EFEAD9")
 
     buf = io.BytesIO()
     img.save(buf, format="PNG")
