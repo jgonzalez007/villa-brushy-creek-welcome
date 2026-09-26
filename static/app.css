@@ -1,0 +1,381 @@
+/* ===================================================================
+   Villa Brushy Creek -- shared stylesheet
+   ===================================================================
+
+   Every page links this file. Page-specific rules stay in that page's
+   own <style> block; anything used by two or more pages belongs here.
+
+   Before this file existed, the palette below was copy-pasted into ten
+   separate <style> blocks inside app.py and the mobile rules into five.
+   Changing one colour meant ten edits. Add shared rules here instead.
+
+   NOTE: this is a real .css file, so braces are single. The <style>
+   blocks still inside app.py go through str.format() and must keep
+   doubling theirs ({{ }}). That asymmetry is the main reason to keep
+   moving rules out of app.py and into this file.
+   =================================================================== */
+
+
+/* --- Palette ------------------------------------------------------ */
+/* Hill Country tones. Previously duplicated at app.py:1169, 2268, 2512,
+   2691, 2736, 2800, 3604, 3759, 3904, 4152 -- now defined once. */
+:root{
+  --creek:       #1F3F3D;
+  --creek-deep:  #142B29;
+  --limestone:   #EFEAD9;
+  --sage:        #7C8B65;
+  --clay:        #C1652F;
+  --bark:        #2A2018;
+
+  /* Supporting tones that were previously inlined as raw hex */
+  --muted:       #9A9276;
+  --muted-ink:   #8A7F63;
+  --rule:        #E2DBC5;
+  --rule-soft:   #EFEAD9;
+  --card:        #FFFFFF;
+  --card-tint:   #FAF6E9;
+
+  /* Breakpoints exist as documentation only -- CSS cannot use custom
+     properties inside a media query. Keep these in sync by hand with
+     the @media blocks at the bottom of this file. The app previously
+     used six unrelated values (480/520/600/700/800/900); it now uses
+     two, and --bp-tablet deliberately matches the width at which the
+     sidebar collapses to a hamburger. */
+  --bp-tablet:   900px;
+  --bp-phone:    600px;
+
+  /* Minimum comfortable touch target. Apple HIG says 44px, Material
+     says 48dp; 44 is the smaller of the two and the one we enforce. */
+  --tap:         44px;
+}
+
+
+/* --- Reset and document ------------------------------------------- */
+*{ box-sizing: border-box; }
+
+body{
+  margin: 0;
+  overflow-x: hidden;
+  background: var(--limestone);
+  color: var(--bark);
+  font-family: 'Work Sans', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  /* Stop iOS from silently re-flowing type in landscape. */
+  -webkit-text-size-adjust: 100%;
+}
+
+
+/* --- Typography --------------------------------------------------- */
+h1{
+  font-family: 'Fraunces', serif;
+  font-weight: 500;
+  font-size: 34px;
+  color: var(--creek-deep);
+  margin: 0 0 6px;
+}
+
+.section-title{
+  font-family: 'Fraunces', serif;
+  font-weight: 500;
+  color: var(--creek-deep);
+}
+
+.back-link{
+  font-size: 13px;
+  color: var(--creek);
+  text-decoration: none;
+}
+.back-link:hover{ text-decoration: underline; }
+
+.footer-note{
+  margin-top: 24px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.subtitle{ color: #77705C; }
+
+
+/* --- Layout ------------------------------------------------------- */
+.wrap{
+  max-width: 780px;
+  padding: 40px 32px 60px;
+  margin: 0 auto;
+}
+
+
+/* --- Sidebar (shared app shell) ----------------------------------- */
+/* Moved verbatim from SIDEBAR_CSS in app.py. This was already the only
+   properly-shared component in the app; it now lives with the rest. */
+.app-shell{ display: flex; align-items: flex-start; min-height: 100vh; }
+
+.sidebar{
+  width: 220px;
+  flex-shrink: 0;
+  background: var(--creek-deep);
+  color: var(--limestone);
+  padding: 24px 18px;
+  min-height: 100vh;
+}
+
+.sidebar-brand{
+  font-family: 'Fraunces', serif;
+  font-weight: 500;
+  font-size: 17px;
+  margin-bottom: 24px;
+  color: #fff;
+}
+
+.sidebar-nav{ display: flex; flex-direction: column; gap: 4px; }
+
+.sidebar-link{
+  display: block;
+  padding: 10px 12px;
+  border-radius: 9px;
+  color: #D8CBA6;
+  text-decoration: none;
+  font-size: 14px;
+}
+.sidebar-link:hover{ background: rgba(255,255,255,0.08); color: #fff; }
+.sidebar-link.active{ background: var(--sage); color: #fff; font-weight: 500; }
+
+.sidebar-footer{
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(255,255,255,0.15);
+}
+
+.sidebar-user{
+  font-size: 12px;
+  color: #B9CFC2;
+  margin-bottom: 8px;
+  word-break: break-word;
+}
+
+.sidebar-logout-form{ margin: 0; }
+
+.sidebar-logout-btn{
+  background: none;
+  border: 1px solid rgba(255,255,255,0.25);
+  color: #D8CBA6;
+  font-size: 13px;
+  padding: 7px 12px;
+  border-radius: 100px;
+  cursor: pointer;
+  width: 100%;
+  font-family: 'Work Sans', sans-serif;
+}
+.sidebar-logout-btn:hover{ background: rgba(255,255,255,0.1); color: #fff; }
+
+.main-content{ flex: 1; min-width: 0; }
+
+.hamburger-btn{
+  display: none;
+  position: fixed;
+  top: 14px;
+  left: 14px;
+  z-index: 1000;
+  background: var(--creek-deep);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  width: var(--tap);
+  height: var(--tap);
+  font-size: 20px;
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+}
+
+.sidebar-backdrop{ display: none; }
+
+
+/* --- Shared components -------------------------------------------- */
+.error-banner{
+  background: #FBEAE0;
+  border: 1px solid #E8B99B;
+  color: #8A3D14;
+  padding: 12px 16px;
+  border-radius: 10px;
+  margin-bottom: 20px;
+  font-size: 14px;
+}
+
+.empty-state{
+  text-align: center;
+  color: var(--muted);
+  padding: 30px;
+}
+
+.status-badge{
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 9px;
+  border-radius: 100px;
+}
+.status-on{ background: var(--sage); color: #fff; }
+.status-off{ background: #DCD4B8; color: #5C5443; }
+
+.guest-name{
+  font-family: 'Fraunces', serif;
+  font-weight: 500;
+  font-size: 16px;
+  color: var(--creek-deep);
+}
+
+.select-btn{
+  font-family: 'Work Sans', sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 8px 14px;
+  border-radius: 100px;
+  border: 1px solid var(--clay);
+  background: none;
+  color: var(--clay);
+  cursor: pointer;
+}
+.select-btn:hover{ background: var(--clay); color: #fff; }
+
+.delete-btn:hover{ border-color: var(--clay); color: var(--clay); }
+
+.form-field{ display: flex; flex-direction: column; gap: 4px; }
+.form-field label{
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted-ink);
+}
+
+
+/* --- Tables ------------------------------------------------------- */
+table{
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--card);
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid var(--rule);
+}
+
+th{
+  text-align: left;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted-ink);
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--rule);
+  background: var(--card-tint);
+}
+
+td{
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--rule-soft);
+  font-size: 14px;
+  vertical-align: middle;
+}
+
+tr:last-child td{ border-bottom: none; }
+
+/* Tables side-scroll rather than blowing out the page. Each page sets
+   its own min-width on .table-scroll table; this is the fallback. */
+.table-scroll{
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  margin-bottom: 28px;
+}
+.table-scroll table{ min-width: 560px; }
+
+
+/* ===================================================================
+   Responsive
+   ===================================================================
+
+   Two breakpoints, not six.
+
+   900px -- the width at which the sidebar becomes a hamburger drawer.
+            Content must adapt at the SAME width, otherwise a tablet in
+            portrait gets mobile navigation with desktop padding. The
+            old code collapsed the sidebar at 900 but did not touch
+            content until 600, leaving that 300px band broken.
+
+   600px -- phones. Tighter spacing and single-column layouts.
+   =================================================================== */
+
+
+/* --- Tablet and below --------------------------------------------- */
+@media (max-width: 900px){
+
+  /* Sidebar becomes an off-canvas drawer */
+  .app-shell{ display: block; }
+  .hamburger-btn{ display: flex; }
+
+  .sidebar{
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 100vh;
+    z-index: 999;
+    width: 240px;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+    overflow-y: auto;
+  }
+  .sidebar.open{ transform: translateX(0); }
+
+  .sidebar-backdrop{
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.4);
+    z-index: 998;
+  }
+  .sidebar-backdrop:not(.open){ display: none; }
+
+  /* Clear the fixed hamburger button */
+  .main-content{ padding-top: 56px; }
+
+  /* Content now adapts at the same width the nav does -- this is the
+     601-900px dead zone fix. */
+  .wrap{ padding: 24px 20px 48px; }
+
+  /* iOS Safari zooms the viewport whenever a focused input renders
+     below 16px, and does not zoom back out afterwards. Every input in
+     this app was 12-15px, so every form focus left the page scaled --
+     including the login screen, the first thing anyone sees on a
+     phone. 16px is the threshold, not a preference. */
+  input,
+  select,
+  textarea{ font-size: 16px; }
+
+  /* Comfortable touch targets. Sidebar links were ~37px and the logout
+     button ~31px. */
+  .sidebar-link{
+    min-height: var(--tap);
+    display: flex;
+    align-items: center;
+  }
+
+  .sidebar-logout-btn,
+  .select-btn,
+  button[type="submit"]{ min-height: var(--tap); }
+}
+
+
+/* --- Phones ------------------------------------------------------- */
+@media (max-width: 600px){
+  .wrap{ padding: 20px 16px 40px; }
+
+  h1{ font-size: 26px; }
+
+  /* Tables stay scrollable but stop being needlessly wide. The doors
+     table in particular declared min-width:900px -- 2.3x a 390px
+     screen -- on the page most likely to be used one-handed while
+     talking to a guest. */
+  .table-scroll table{ min-width: 480px; }
+
+  th,
+  td{ padding: 12px 12px; }
+
+  th{ font-size: 10px; }
+}

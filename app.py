@@ -1165,16 +1165,8 @@ TEMPLATE = """<!DOCTYPE html>
 <meta http-equiv="refresh" content="3600">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/app.css?v=1">
 <style>
-  :root{{
-    --creek: #1F3F3D;
-    --creek-deep: #142B29;
-    --limestone: #EFEAD9;
-    --sage: #7C8B65;
-    --clay: #C1652F;
-    --bark: #2A2018;
-  }}
-  *{{box-sizing:border-box;}}
   body{{
     margin:0;
     overflow-x:hidden;
@@ -1183,7 +1175,7 @@ TEMPLATE = """<!DOCTYPE html>
     font-family:'Work Sans', sans-serif;
     -webkit-font-smoothing:antialiased;
   }}
-  .wrap{{ max-width: 1180px; margin:0 auto; padding: 0 40px 50px; }}
+  .wrap{{ max-width: 1180px; padding-top: 0; }}
   .hero{{
     background: linear-gradient(180deg, var(--creek) 0%, var(--creek-deep) 100%);
     color: var(--limestone);
@@ -1469,6 +1461,7 @@ TEMPLATE = """<!DOCTYPE html>
 
 ERROR_TEMPLATE = """<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Welcome screen — error</title>
+<link rel="stylesheet" href="/static/app.css?v=1">
 <meta http-equiv="refresh" content="300">
 <style>
 body{{font-family:sans-serif;background:#F6F1E1;color:#2A2018;padding:60px;}}
@@ -2017,52 +2010,6 @@ _SIDEBAR_NAV_ITEMS = [
     ("/users", "Users"),
 ]
 
-SIDEBAR_CSS = """
-  .app-shell{ display:flex; align-items:flex-start; min-height:100vh; }
-  .sidebar{
-    width: 220px; flex-shrink:0; background: var(--creek-deep); color: var(--limestone);
-    padding: 24px 18px; box-sizing:border-box; min-height:100vh;
-  }
-  .sidebar-brand{
-    font-family:'Fraunces', serif; font-weight:500; font-size:17px; margin-bottom:24px; color:#fff;
-  }
-  .sidebar-nav{ display:flex; flex-direction:column; gap:4px; }
-  .sidebar-link{
-    display:block; padding:10px 12px; border-radius:9px; color:#D8CBA6;
-    text-decoration:none; font-size:14px;
-  }
-  .sidebar-link:hover{ background: rgba(255,255,255,0.08); color:#fff; }
-  .sidebar-link.active{ background: var(--sage); color:#fff; font-weight:500; }
-  .sidebar-footer{ margin-top:24px; padding-top:16px; border-top:1px solid rgba(255,255,255,0.15); }
-  .sidebar-user{ font-size:12px; color:#B9CFC2; margin-bottom:8px; word-break:break-word; }
-  .sidebar-logout-form{ margin:0; }
-  .sidebar-logout-btn{
-    background:none; border:1px solid rgba(255,255,255,0.25); color:#D8CBA6; font-size:13px;
-    padding:7px 12px; border-radius:100px; cursor:pointer; width:100%; font-family:'Work Sans',sans-serif;
-  }
-  .sidebar-logout-btn:hover{ background: rgba(255,255,255,0.1); color:#fff; }
-  .main-content{ flex:1; min-width:0; }
-  .hamburger-btn{
-    display:none; position:fixed; top:14px; left:14px; z-index:1000;
-    background: var(--creek-deep); color:#fff; border:none; border-radius:8px;
-    width:40px; height:40px; font-size:20px; cursor:pointer; align-items:center; justify-content:center;
-  }
-  .sidebar-backdrop{ display:none; }
-  @media (max-width: 900px){
-    .app-shell{ display:block; }
-    .hamburger-btn{ display:flex; }
-    .sidebar{
-      position:fixed; top:0; left:0; height:100vh; z-index:999; width: 240px;
-      transform: translateX(-100%); transition: transform 0.2s ease; overflow-y:auto;
-    }
-    .sidebar.open{ transform: translateX(0); }
-    .sidebar-backdrop{ position:fixed; inset:0; background:rgba(0,0,0,0.4); z-index:998; }
-    .sidebar-backdrop:not(.open){ display:none; }
-    .main-content{ padding-top: 56px; }
-  }
-"""
-
-
 def render_sidebar(active_path):
     username = session.get("username", "")
     links_html = "".join(
@@ -2098,6 +2045,18 @@ def _require_login():
     # session/browser request at all, so it's excluded before any of the
     # login/bootstrap logic below.
     if request.path == "/webhooks/ownerrez":
+        return None
+
+    # Static assets must be reachable while logged out, or the login and
+    # setup pages -- which link the shared stylesheet -- render unstyled.
+    # This sits above the bootstrap branch below because /setup needs it
+    # too, before any password exists.
+    #
+    # This is the only prefix match in this function, and it stays safe
+    # because Flask's /static route serves nothing but the files committed
+    # under static/. Keep credentials out of that directory and it stays
+    # true.
+    if request.path.startswith("/static/"):
         return None
 
     # Bootstrap: nobody has a password set yet -> only /setup is reachable,
@@ -2252,7 +2211,6 @@ def logout():
 def menu():
     html = MENU_TEMPLATE.format(
         sidebar=render_sidebar("/menu"),
-        sidebar_css=SIDEBAR_CSS,
     )
     return _no_cache(Response(html, mimetype="text/html"))
 
@@ -2264,17 +2222,11 @@ MENU_TEMPLATE = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Menu — Villa Brushy Creek</title>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/app.css?v=1">
 <style>
-  :root{{ --creek: #1F3F3D; --creek-deep: #142B29; --limestone: #EFEAD9; --sage: #7C8B65; --clay: #C1652F; --bark: #2A2018; }}
-  *{{box-sizing:border-box;}}
-  body{{ margin:0; overflow-x:hidden; background: var(--limestone); color: var(--bark);
-    font-family:'Work Sans', sans-serif; }}
-  {sidebar_css}
-  .wrap{{ max-width: 780px; padding: 40px 32px 60px; }}
   @media (max-width: 600px){{
-    .wrap{{ padding: 24px 16px 40px; }}
   }}
-  h1{{ font-family:'Fraunces', serif; font-weight:500; font-size: 34px; color: var(--creek-deep); margin: 0 0 28px; }}
+  h1{{ margin: 0 0 28px; }}
   .menu-grid{{ display:grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }}
   @media (max-width: 520px){{
     .menu-grid{{ grid-template-columns: 1fr; }}
@@ -2392,7 +2344,6 @@ def messages_page():
         ai_status_class="status-on" if ai_configured else "status-off",
         csrf_field=csrf_field(),
         sidebar=render_sidebar("/messages"),
-        sidebar_css=SIDEBAR_CSS,
     )
     return _no_cache(Response(html, mimetype="text/html"))
 
@@ -2508,27 +2459,10 @@ MESSAGES_TEMPLATE = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Messages — Villa Brushy Creek</title>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/app.css?v=1">
 <style>
-  :root{{ --creek: #1F3F3D; --creek-deep: #142B29; --limestone: #EFEAD9; --sage: #7C8B65; --clay: #C1652F; --bark: #2A2018; }}
-  *{{box-sizing:border-box;}}
-  body{{ margin:0; overflow-x:hidden; background: var(--limestone); color: var(--bark);
-    font-family:'Work Sans', sans-serif; }}
-  {sidebar_css}
-  .wrap{{ max-width: 780px; padding: 40px 32px 60px; }}
-  h1{{ font-family:'Fraunces', serif; font-weight:500; font-size: 34px; color: var(--creek-deep); margin: 0 0 20px; }}
+  h1{{ margin: 0 0 20px; }}
   h2.section-title{{ font-family:'Fraunces', serif; font-weight:500; font-size: 18px; color: var(--creek-deep); margin: 32px 0 12px; }}
-  @media (max-width: 600px){{
-    .wrap{{ padding: 20px 16px 40px; }}
-    h1{{ font-size: 26px; }}
-  }}
-  .error-banner{{
-    background:#FBEAE0; border:1px solid #E8B99B; color:#8A3D14;
-    padding:12px 16px; border-radius:10px; margin-bottom:20px; font-size:14px;
-  }}
-  .empty-state{{ text-align:center; color:#9A9276; padding: 30px; }}
-  .status-badge{{ display:inline-block; font-size: 11px; font-weight:600; padding: 2px 9px; border-radius: 100px; }}
-  .status-on{{ background: var(--sage); color:#fff; }}
-  .status-off{{ background:#DCD4B8; color:#5C5443; }}
   .setup-card{{
     background:#fff; border:1px solid #E2DBC5; border-radius:14px; padding: 16px 20px; margin-bottom: 12px;
   }}
@@ -2568,13 +2502,10 @@ MESSAGES_TEMPLATE = """<!DOCTYPE html>
     font-family:'Work Sans', sans-serif; font-size: 12px; font-weight:500; padding: 7px 14px;
     border-radius: 100px; border:1px solid var(--clay); background:#fff; color: var(--clay); cursor:pointer;
   }}
-  .select-btn:hover{{ background: var(--clay); color:#fff; }}
   .delete-btn{{
     font-family:'Work Sans', sans-serif; font-size: 12px; color:#8A7F63; background:none;
     border:1px solid #DCD4B8; border-radius:100px; padding: 7px 14px; cursor:pointer;
   }}
-  .delete-btn:hover{{ border-color: var(--clay); color: var(--clay); }}
-  .footer-note{{ margin-top: 24px; font-size: 12px; color:#9A9276; }}
 </style>
 </head>
 <body>
@@ -2635,7 +2566,6 @@ def users_page():
         rows=rows,
         csrf_field=csrf_field(),
         sidebar=render_sidebar("/users"),
-        sidebar_css=SIDEBAR_CSS,
     )
     return _no_cache(Response(html, mimetype="text/html"))
 
@@ -2687,9 +2617,8 @@ SETUP_TEMPLATE = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Set up admin password — Villa Brushy Creek</title>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/app.css?v=1">
 <style>
-  :root{{ --creek: #1F3F3D; --creek-deep: #142B29; --limestone: #EFEAD9; --sage: #7C8B65; --clay: #C1652F; --bark: #2A2018; }}
-  *{{box-sizing:border-box;}}
   body{{ margin:0; min-height:100vh; overflow-x:hidden; display:flex; align-items:center; justify-content:center;
     background: linear-gradient(180deg, var(--creek) 0%, var(--creek-deep) 100%);
     font-family:'Work Sans', sans-serif; padding: 20px; }}
@@ -2732,9 +2661,8 @@ LOGIN_TEMPLATE = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Log in — Villa Brushy Creek</title>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/app.css?v=1">
 <style>
-  :root{{ --creek: #1F3F3D; --creek-deep: #142B29; --limestone: #EFEAD9; --sage: #7C8B65; --clay: #C1652F; --bark: #2A2018; }}
-  *{{box-sizing:border-box;}}
   body{{ margin:0; min-height:100vh; overflow-x:hidden; display:flex; align-items:center; justify-content:center;
     background: linear-gradient(180deg, var(--creek) 0%, var(--creek-deep) 100%);
     font-family:'Work Sans', sans-serif; padding: 20px; }}
@@ -2796,49 +2724,27 @@ USERS_TEMPLATE = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Users — Villa Brushy Creek</title>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/app.css?v=1">
 <style>
-  :root{{ --creek: #1F3F3D; --creek-deep: #142B29; --limestone: #EFEAD9; --sage: #7C8B65; --clay: #C1652F; --bark: #2A2018; }}
-  *{{box-sizing:border-box;}}
-  body{{ margin:0; overflow-x:hidden; background: var(--limestone); color: var(--bark);
-    font-family:'Work Sans', sans-serif; }}
-  {sidebar_css}
-  .wrap{{ max-width: 780px; padding: 40px 32px 60px; }}
-  h1{{ font-family:'Fraunces', serif; font-weight:500; font-size: 34px; color: var(--creek-deep); margin: 0 0 20px; }}
-  @media (max-width: 600px){{
-    .wrap{{ padding: 20px 16px 40px; }}
-    h1{{ font-size: 26px; }}
-  }}
+  h1{{ margin: 0 0 20px; }}
   table{{ width:100%; border-collapse: collapse; background:#fff; border-radius: 14px; overflow:hidden; border:1px solid #E2DBC5; margin-bottom: 0; }}
   .table-scroll{{ overflow-x:auto; -webkit-overflow-scrolling:touch; margin-bottom: 28px; }}
   .table-scroll table{{ min-width: 560px; }}
-  th{{ text-align:left; font-size: 11px; text-transform:uppercase; letter-spacing:0.08em; color:#8A7F63;
-    padding: 14px 16px; border-bottom: 1px solid #E2DBC5; background:#FAF6E9; }}
-  td{{ padding: 14px 16px; border-bottom: 1px solid #EFEAD9; font-size: 14px; vertical-align: middle; }}
-  tr:last-child td{{ border-bottom:none; }}
-  .guest-name{{ font-family:'Fraunces', serif; font-weight:500; font-size: 16px; color: var(--creek-deep); }}
-  .status-badge{{ display:inline-block; font-size: 11px; font-weight:600; padding: 2px 9px; border-radius: 100px; }}
-  .status-on{{ background: var(--sage); color:#fff; }}
-  .status-off{{ background:#DCD4B8; color:#5C5443; }}
   .row-send-form{{ display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin:0; }}
   .row-time-select{{ font-family:'Work Sans', sans-serif; font-size: 12px; padding: 6px 8px;
     border-radius: 7px; border:1px solid #DCD4B8; }}
   .select-btn{{ font-family:'Work Sans', sans-serif; font-size: 13px; font-weight:500; padding: 8px 14px;
     border-radius: 100px; border:1px solid var(--clay); background:#fff; color: var(--clay); cursor:pointer; white-space:nowrap; }}
-  .select-btn:hover{{ background: var(--clay); color:#fff; }}
   .delete-btn{{ font-family:'Work Sans', sans-serif; font-size: 12px; color:#8A7F63; background:none;
     border:1px solid #DCD4B8; border-radius:100px; padding: 6px 14px; cursor:pointer; }}
-  .delete-btn:hover{{ border-color: var(--clay); color: var(--clay); }}
   .delete-btn[disabled]{{ opacity:0.4; cursor:default; }}
   .add-user-card{{ background:#fff; border:1px solid #E2DBC5; border-radius:14px; padding: 18px 20px; }}
   .add-user-form{{ display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end; }}
-  .form-field{{ display:flex; flex-direction:column; gap:4px; }}
-  .form-field label{{ font-size: 10px; text-transform:uppercase; letter-spacing:0.06em; color:#8A7F63; }}
   .form-field input{{ font-family:'Work Sans', sans-serif; font-size: 13px; padding: 8px 10px;
     border-radius: 7px; border:1px solid #DCD4B8; }}
   .add-user-btn{{ font-family:'Work Sans', sans-serif; font-size: 13px; font-weight:500; padding: 9px 18px;
     border-radius: 100px; border:1px solid var(--creek); background: var(--creek); color:#fff; cursor:pointer; }}
   .add-user-btn:hover{{ background: var(--creek-deep); }}
-  .footer-note{{ margin-top: 24px; font-size: 12px; color:#9A9276; }}
 </style>
 </head>
 <body>
@@ -2969,7 +2875,6 @@ def manage():
         ),
         csrf_field=csrf_field(),
         sidebar=render_sidebar("/manage"),
-        sidebar_css=SIDEBAR_CSS,
     )
     return _no_cache(Response(html, mimetype="text/html"))
 
@@ -3057,7 +2962,6 @@ def cleaning():
         ),
         csrf_field=csrf_field(),
         sidebar=render_sidebar("/cleaning"),
-        sidebar_css=SIDEBAR_CSS,
     )
     return _no_cache(Response(html, mimetype="text/html"))
 
@@ -3106,7 +3010,6 @@ def pool():
             device_options="",
             csrf_field=csrf_field(),
             sidebar=render_sidebar("/pool"),
-            sidebar_css=SIDEBAR_CSS,
         )
         return _no_cache(Response(html, mimetype="text/html"))
 
@@ -3186,7 +3089,6 @@ def pool():
             device_options=device_options or '<option value="">No equipment available</option>',
             csrf_field=csrf_field(),
             sidebar=render_sidebar("/pool"),
-            sidebar_css=SIDEBAR_CSS,
         )
     except Exception as e:
         # Belt-and-suspenders: a fetch can succeed but return data shaped
@@ -3206,7 +3108,6 @@ def pool():
             device_options="",
             csrf_field=csrf_field(),
             sidebar=render_sidebar("/pool"),
-            sidebar_css=SIDEBAR_CSS,
         )
     return _no_cache(Response(html, mimetype="text/html"))
 
@@ -3470,7 +3371,6 @@ def doors():
         selected_month=month,
         csrf_field=csrf_field(),
         sidebar=render_sidebar("/doors"),
-        sidebar_css=SIDEBAR_CSS,
     )
     return _no_cache(Response(html, mimetype="text/html"))
 
@@ -3600,29 +3500,12 @@ MANAGE_TEMPLATE = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Manage — Villa Brushy Creek Welcome Screen</title>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/app.css?v=1">
 <style>
-  :root{{
-    --creek: #1F3F3D; --creek-deep: #142B29; --limestone: #EFEAD9;
-    --sage: #7C8B65; --clay: #C1652F; --bark: #2A2018;
-  }}
-  *{{box-sizing:border-box;}}
-  body{{ margin:0; overflow-x:hidden; background: var(--limestone); color: var(--bark);
-    font-family:'Work Sans', sans-serif; }}
-  {sidebar_css}
-  .wrap{{ max-width: 980px; padding: 40px 32px 60px; }}
+  .wrap{{ max-width: 980px; }}
   h1{{ font-family:'Fraunces', serif; font-weight:500; font-size: 34px;
     color: var(--creek-deep); margin: 0 0 6px; }}
   .subtitle{{ color:#77705C; margin: 0 0 28px; font-size:14px; }}
-  @media (max-width: 600px){{
-    .wrap{{ padding: 20px 16px 40px; }}
-    h1{{ font-size: 26px; }}
-  }}
-  .back-link{{ font-size: 13px; color: var(--creek); text-decoration:none; }}
-  .back-link:hover{{ text-decoration:underline; }}
-  .error-banner{{
-    background:#FBEAE0; border:1px solid #E8B99B; color:#8A3D14;
-    padding:12px 16px; border-radius:10px; margin-bottom:20px; font-size:14px;
-  }}
   .mode-toggle{{ display:flex; gap:10px; margin: 20px 0 28px; }}
   .mode-toggle form{{ margin:0; }}
   .mode-btn{{
@@ -3642,9 +3525,6 @@ MANAGE_TEMPLATE = """<!DOCTYPE html>
     text-align:left; font-size: 11px; text-transform:uppercase; letter-spacing:0.08em;
     color:#8A7F63; padding: 14px 16px; border-bottom: 1px solid #E2DBC5; background:#FAF6E9;
   }}
-  td{{ padding: 14px 16px; border-bottom: 1px solid #EFEAD9; font-size: 14px; vertical-align: middle; }}
-  tr:last-child td{{ border-bottom:none; }}
-  .guest-name{{ font-family:'Fraunces', serif; font-weight:500; font-size: 16px; color: var(--creek-deep); }}
   .conf{{ color:#9A9276; font-size:12px; }}
   .manage-row-selected{{ background: #F3F0DD; }}
   .select-btn{{
@@ -3652,12 +3532,9 @@ MANAGE_TEMPLATE = """<!DOCTYPE html>
     padding: 8px 14px; border-radius: 100px; border:1px solid var(--clay);
     background:#fff; color: var(--clay); cursor:pointer; white-space:nowrap;
   }}
-  .select-btn:hover{{ background: var(--clay); color:#fff; }}
   .select-btn[disabled]{{
     border-color:#DCD4B8; color:#9A9276; cursor:default; background:#F3F0DD;
   }}
-  .empty-state{{ text-align:center; color:#9A9276; padding: 30px; }}
-  .footer-note{{ margin-top: 24px; font-size: 12px; color:#9A9276; }}
 </style>
 </head>
 <body>
@@ -3755,30 +3632,12 @@ CLEANING_TEMPLATE = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Cleaning Checklist — Villa Brushy Creek</title>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/app.css?v=1">
 <style>
-  :root{{
-    --creek: #1F3F3D; --creek-deep: #142B29; --limestone: #EFEAD9;
-    --sage: #7C8B65; --clay: #C1652F; --bark: #2A2018;
-  }}
-  *{{box-sizing:border-box;}}
-  body{{ margin:0; overflow-x:hidden; background: var(--limestone); color: var(--bark);
-    font-family:'Work Sans', sans-serif; }}
-  {sidebar_css}
-  .wrap{{ max-width: 900px; padding: 40px 32px 60px; }}
+  .wrap{{ max-width: 900px; }}
   h1{{ font-family:'Fraunces', serif; font-weight:500; font-size: 34px;
     color: var(--creek-deep); margin: 0 0 6px; }}
   .subtitle{{ color:#77705C; margin: 0 0 28px; font-size:14px; }}
-  @media (max-width: 600px){{
-    .wrap{{ padding: 20px 16px 40px; }}
-    h1{{ font-size: 26px; }}
-  }}
-  .back-link{{ font-size: 13px; color: var(--creek); text-decoration:none; }}
-  .back-link:hover{{ text-decoration:underline; }}
-  .error-banner{{
-    background:#FBEAE0; border:1px solid #E8B99B; color:#8A3D14;
-    padding:12px 16px; border-radius:10px; margin-bottom:20px; font-size:14px;
-  }}
-  .empty-state{{ text-align:center; color:#9A9276; padding: 30px; }}
   .cleaning-card{{
     background:#fff; border:1px solid #E2DBC5; border-radius:16px;
     padding: 22px 24px; margin-bottom: 20px;
@@ -3900,21 +3759,14 @@ POOL_TEMPLATE = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Pool Control — {system_name}</title>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/app.css?v=1">
 <style>
-  :root{{
-    --creek: #1F3F3D; --creek-deep: #142B29; --limestone: #EFEAD9;
-    --sage: #7C8B65; --clay: #C1652F; --bark: #2A2018;
-  }}
-  *{{box-sizing:border-box;}}
-  body{{ margin:0; overflow-x:hidden; background: var(--limestone); color: var(--bark);
-    font-family:'Work Sans', sans-serif; font-size: 14px; }}
-  {sidebar_css}
-  .wrap{{ max-width: 900px; padding: 20px 20px 30px; }}
+  body{{ font-size: 14px; }}
+  .wrap{{ max-width: 900px; }}
   h1{{ font-family:'Fraunces', serif; font-weight:500; font-size: 24px;
     color: var(--creek-deep); margin: 8px 0 4px; display:inline-block; }}
   .subtitle{{ color:#77705C; margin: 0 0 16px; font-size:12px; }}
   .back-link{{ font-size: 12px; color: var(--creek); text-decoration:none; }}
-  .back-link:hover{{ text-decoration:underline; }}
   .online-badge{{
     display:inline-block; font-size: 11px; font-weight:600; padding: 2px 8px;
     border-radius: 100px; margin-left: 10px; vertical-align: middle;
@@ -3963,8 +3815,6 @@ POOL_TEMPLATE = """<!DOCTYPE html>
     display:inline-block; font-size: 10px; font-weight:600; padding: 1px 7px;
     border-radius: 100px;
   }}
-  .status-on{{ background: var(--sage); color:#fff; }}
-  .status-off{{ background:#DCD4B8; color:#5C5443; }}
   .toggle-btn{{
     font-family:'Work Sans', sans-serif; font-size: 11px; font-weight:500;
     padding: 5px 10px; border-radius: 100px; border:1px solid #DCD4B8;
@@ -3992,8 +3842,6 @@ POOL_TEMPLATE = """<!DOCTYPE html>
     padding: 14px; margin-top: 10px;
   }}
   .add-schedule-form{{ display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end; }}
-  .form-field{{ display:flex; flex-direction:column; gap:4px; }}
-  .form-field label{{ font-size: 10px; text-transform:uppercase; letter-spacing:0.06em; color:#8A7F63; }}
   .form-field select, .form-field input[type=time]{{
     font-family:'Work Sans', sans-serif; font-size: 13px;
     padding: 6px 8px; border-radius: 7px; border:1px solid #DCD4B8;
@@ -4148,30 +3996,12 @@ DOORS_TEMPLATE = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Door Codes — Villa Brushy Creek</title>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/app.css?v=1">
 <style>
-  :root{{
-    --creek: #1F3F3D; --creek-deep: #142B29; --limestone: #EFEAD9;
-    --sage: #7C8B65; --clay: #C1652F; --bark: #2A2018;
-  }}
-  *{{box-sizing:border-box;}}
-  body{{ margin:0; overflow-x:hidden; background: var(--limestone); color: var(--bark);
-    font-family:'Work Sans', sans-serif; }}
-  {sidebar_css}
-  .wrap{{ max-width: 980px; padding: 40px 32px 60px; }}
+  .wrap{{ max-width: 980px; }}
   h1{{ font-family:'Fraunces', serif; font-weight:500; font-size: 34px;
     color: var(--creek-deep); margin: 0 0 6px; }}
   .subtitle{{ color:#77705C; margin: 0 0 20px; font-size:14px; }}
-  @media (max-width: 600px){{
-    .wrap{{ padding: 20px 16px 40px; }}
-    h1{{ font-size: 26px; }}
-  }}
-  .back-link{{ font-size: 13px; color: var(--creek); text-decoration:none; }}
-  .back-link:hover{{ text-decoration:underline; }}
-  .error-banner{{
-    background:#FBEAE0; border:1px solid #E8B99B; color:#8A3D14;
-    padding:12px 16px; border-radius:10px; margin-bottom:20px; font-size:14px;
-  }}
-  .empty-state{{ text-align:center; color:#9A9276; padding: 30px; }}
   .controls{{ display:flex; gap:14px; margin: 20px 0 24px; flex-wrap:wrap; align-items:center; }}
   .controls form{{ margin:0; display:flex; gap:14px; align-items:center; flex-wrap:wrap; }}
   .controls select{{
@@ -4188,15 +4018,10 @@ DOORS_TEMPLATE = """<!DOCTYPE html>
     text-align:left; font-size: 11px; text-transform:uppercase; letter-spacing:0.08em;
     color:#8A7F63; padding: 14px 16px; border-bottom: 1px solid #E2DBC5; background:#FAF6E9;
   }}
-  td{{ padding: 14px 16px; border-bottom: 1px solid #EFEAD9; font-size: 14px; vertical-align: middle; }}
-  tr:last-child td{{ border-bottom:none; }}
-  .guest-name{{ font-family:'Fraunces', serif; font-weight:500; font-size: 16px; color: var(--creek-deep); }}
   .status-badge{{
     display:inline-block; font-size: 11px; font-weight:600; padding: 2px 9px;
     border-radius: 100px;
   }}
-  .status-on{{ background: var(--sage); color:#fff; }}
-  .status-off{{ background:#DCD4B8; color:#5C5443; }}
   .row-send-form{{ display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin:0; }}
   .row-time-select{{
     font-family:'Work Sans', sans-serif; font-size: 12px;
@@ -4207,7 +4032,6 @@ DOORS_TEMPLATE = """<!DOCTYPE html>
     padding: 8px 14px; border-radius: 100px; border:1px solid var(--clay);
     background:#fff; color: var(--clay); cursor:pointer; white-space:nowrap;
   }}
-  .select-btn:hover{{ background: var(--clay); color:#fff; }}
   .select-btn[disabled]{{
     border-color:#DCD4B8; color:#9A9276; cursor:default; background:#F3F0DD;
   }}
@@ -4216,7 +4040,6 @@ DOORS_TEMPLATE = """<!DOCTYPE html>
     background:none; border:1px solid #DCD4B8; border-radius:100px;
     padding: 6px 14px; cursor:pointer;
   }}
-  .delete-btn:hover{{ border-color: var(--clay); color: var(--clay); }}
   .expired-row{{ opacity: 0.6; }}
   .section-title{{
     font-family:'Fraunces', serif; font-weight:500; font-size: 20px;
@@ -4231,8 +4054,6 @@ DOORS_TEMPLATE = """<!DOCTYPE html>
   }}
   .manual-code-hint{{ font-size: 13px; color:#77705C; margin: 0 0 16px; }}
   .manual-code-form{{ display:flex; flex-wrap:wrap; gap: 14px; align-items:flex-end; }}
-  .form-field{{ display:flex; flex-direction:column; gap:4px; }}
-  .form-field label{{ font-size: 10px; text-transform:uppercase; letter-spacing:0.06em; color:#8A7F63; }}
   .form-field select, .form-field input[type=text], .form-field input[type=date], .form-field input[type=time]{{
     font-family:'Work Sans', sans-serif; font-size: 13px;
     padding: 8px 10px; border-radius: 7px; border:1px solid #DCD4B8;
@@ -4252,7 +4073,6 @@ DOORS_TEMPLATE = """<!DOCTYPE html>
     background: var(--creek); color:#fff; cursor:pointer;
   }}
   .add-schedule-btn:hover{{ background: var(--creek-deep); }}
-  .footer-note{{ margin-top: 24px; font-size: 12px; color:#9A9276; }}
 </style>
 </head>
 <body>
