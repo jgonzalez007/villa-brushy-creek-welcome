@@ -43,6 +43,7 @@ RUNNING LOCALLY (optional, for testing before you deploy)
 import os
 import sys
 import io
+import html
 import base64
 import uuid
 import json
@@ -59,6 +60,22 @@ from flask import Flask, Response, request, redirect, session
 from werkzeug.security import generate_password_hash, check_password_hash
 
 import kwikset_client
+
+
+def h(value):
+    """Escape untrusted text before it is interpolated into HTML.
+
+    Every page in this app is a plain str.format() string, and format()
+    does no escaping of its own. Anything originating outside this app --
+    guest names and message bodies from OwnerRez, and API error text,
+    which get_ownerrez errors deliberately include verbatim -- must go
+    through here first, or a guest can inject markup that runs in the
+    logged-in admin's browser.
+
+    Returns "" for None so templates render a blank rather than "None".
+    """
+    return html.escape("" if value is None else str(value), quote=True)
+
 
 # ---------------------------------------------------------------------------
 # CONFIG
@@ -1115,7 +1132,7 @@ def render_html(g):
     elif days_out == 1:
         countdown_str = "Arriving tomorrow"
     else:
-        countdown_str = f"<b>{days_out}</b>&nbsp;days until {g['first_name']}'s group arrives"
+        countdown_str = f"<b>{days_out}</b>&nbsp;days until {h(g['first_name'])}'s group arrives"
 
     if _WIFI_QR_DATA_URI:
         wifi_section = WIFI_SECTION_TEMPLATE.format(
@@ -1126,7 +1143,7 @@ def render_html(g):
         wifi_section = ""
 
     return TEMPLATE.format(
-        first_name=g["first_name"],
+        first_name=h(g["first_name"]),
         property_name=g["property_name"],
         property_name_upper=g["property_name"].upper(),
         arrival_str=format_date(g["arrival"]),
@@ -2160,7 +2177,7 @@ def setup():
 
     html = SETUP_TEMPLATE.format(
         username=ADMIN_USERNAME,
-        error_banner=f'<div class="error-banner">{error}</div>' if error else "",
+        error_banner=f'<div class="error-banner">{h(error)}</div>' if error else "",
     )
     return _no_cache(Response(html, mimetype="text/html"))
 
@@ -2187,7 +2204,7 @@ def login():
         error = "Incorrect username or password."
 
     html = LOGIN_TEMPLATE.format(
-        error_banner=f'<div class="error-banner">{error}</div>' if error else "",
+        error_banner=f'<div class="error-banner">{h(error)}</div>' if error else "",
         next_path=next_path,
     )
     return _no_cache(Response(html, mimetype="text/html"))
@@ -2372,22 +2389,22 @@ def messages_page():
 
             cards.append(MESSAGE_CARD_TEMPLATE.format(
                 event_id=row["id"],
-                guest=row["guest"] or "Unknown guest",
+                guest=h(row["guest"] or "Unknown guest"),
                 received=row["received_utc"] or "",
-                body=(row["body"] or "").replace("<", "&lt;").replace(">", "&gt;"),
-                draft=draft.replace("<", "&lt;").replace(">", "&gt;"),
-                ai_note=(f'<div class="ai-note">AI draft unavailable: {ai_error}</div>' if ai_error else ""),
+                body=h(row["body"]),
+                draft=h(draft),
+                ai_note=(f'<div class="ai-note">AI draft unavailable: {h(ai_error)}</div>' if ai_error else ""),
                 csrf_field=csrf_field(),
             ))
         cards_html = "".join(cards)
 
     html = MESSAGES_TEMPLATE.format(
-        error_banner=f'<div class="error-banner">{error}</div>' if error else "",
+        error_banner=f'<div class="error-banner">{h(error)}</div>' if error else "",
         cards=cards_html,
         webhook_url=webhook_url or "Set PUBLIC_BASE_URL to see your real webhook URL here.",
         subscribed_label="Subscribed" if message_subscribed else "Not subscribed",
         subscribed_class="status-on" if message_subscribed else "status-off",
-        subs_error_banner=(f'<div class="error-banner">{subs_error}</div>' if subs_error else ""),
+        subs_error_banner=(f'<div class="error-banner">{h(subs_error)}</div>' if subs_error else ""),
         ai_status_label="Configured" if ai_configured else "Not configured",
         ai_status_class="status-on" if ai_configured else "status-off",
         csrf_field=csrf_field(),
@@ -2888,7 +2905,7 @@ def index():
         if _cache["last_error"] and _cache["last_updated"] is None:
             # Never had a successful fetch yet
             html = ERROR_TEMPLATE.format(
-                error=_cache["last_error"],
+                error=h(_cache["last_error"]),
                 last_updated="never",
             )
         else:
@@ -2942,7 +2959,7 @@ def manage():
             nights = (g["departure"] - g["arrival"]).days
             row_parts.append(MANAGE_ROW_TEMPLATE.format(
                 booking_key=g["booking_key"],
-                first_name=g["first_name"],
+                first_name=h(g["first_name"]),
                 arrival_str=format_date(g["arrival"]),
                 departure_str=format_date(g["departure"]),
                 nights=nights,
@@ -2964,7 +2981,7 @@ def manage():
         last_updated=last_updated or "never",
         upcoming_count_label=len(upcoming),
         error_banner=(
-            f'<div class="error-banner">Last refresh failed: {last_error}</div>'
+            f'<div class="error-banner">Last refresh failed: {h(last_error)}</div>'
             if last_error else ""
         ),
         csrf_field=csrf_field(),
@@ -3035,7 +3052,7 @@ def cleaning():
 
             cards.append(CLEANING_CARD_TEMPLATE.format(
                 booking_key=g["booking_key"],
-                first_name=g["first_name"],
+                first_name=h(g["first_name"]),
                 arrival_str=format_date(g["arrival"]),
                 departure_str=format_date(g["departure"]),
                 done_count=done_count,
@@ -3052,7 +3069,7 @@ def cleaning():
         cards=cards_html,
         last_updated=last_updated or "never",
         error_banner=(
-            f'<div class="error-banner">Last refresh failed: {last_error}</div>'
+            f'<div class="error-banner">Last refresh failed: {h(last_error)}</div>'
             if last_error else ""
         ),
         csrf_field=csrf_field(),
@@ -3098,7 +3115,7 @@ def pool():
         html = POOL_TEMPLATE.format(
             system_name=PROPERTY_DISPLAY_NAME,
             online_badge="",
-            error_banner=f'<div class="error-banner">{error}</div>',
+            error_banner=f'<div class="error-banner">{h(error)}</div>',
             sensor_cards="",
             setpoint_cards="",
             equipment_cards="",
@@ -3198,7 +3215,7 @@ def pool():
             system_name=PROPERTY_DISPLAY_NAME,
             online_badge="",
             error_banner=f'<div class="error-banner">Error building pool page: '
-                          f'{type(e).__name__}: {e}</div>',
+                          f'{h(type(e).__name__)}: {h(e)}</div>',
             sensor_cards="",
             setpoint_cards="",
             equipment_cards="",
@@ -3403,8 +3420,8 @@ def doors():
                 agreement_label, agreement_class = "Not signed", "status-off"
 
             rows.append(DOORS_ROW_TEMPLATE.format(
-                first_name=g["first_name"],
-                last_name=g["last_name"],
+                first_name=h(g["first_name"]),
+                last_name=h(g["last_name"]),
                 arrival_str=format_date(g["arrival"]),
                 departure_str=format_date(g["departure"]),
                 last4=last4,
@@ -3444,7 +3461,7 @@ def doors():
             expired = _is_schedule_expired(schedule)
             code_rows.append(ALL_CODES_ROW_TEMPLATE.format(
                 lock_label=lock_name_by_id.get(row["device_id"], row["device_id"]),
-                guest_name=row["guest_name"] or "—",
+                guest_name=h(row["guest_name"] or "—"),
                 code=row["code"] or "—",
                 slot=row["slot"],
                 window_str=_format_schedule_window(schedule),
@@ -3457,7 +3474,7 @@ def doors():
         all_codes_rows = "".join(code_rows)
 
     html = DOORS_TEMPLATE.format(
-        error_banner=f'<div class="error-banner">{error}</div>' if error else "",
+        error_banner=f'<div class="error-banner">{h(error)}</div>' if error else "",
         lock_options=lock_options or '<option value="">No locks found</option>',
         month_options=month_options,
         default_checkin_options=_time_options_html(default_checkin),
