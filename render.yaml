@@ -2,7 +2,12 @@ services:
   - type: web
     name: villa-brushy-creek-welcome
     runtime: python
-    plan: starter          # $7/mo, always-on. Change to "free" to test at no cost.
+    # Render retired the old named tiers ("starter", "standard", ...) in
+    # favour of explicit CPU/RAM plan IDs. "0.5c-512mb" is what "starter"
+    # became: same 0.5 CPU / 512 MB, same $7/mo, always-on.
+    # Use "free" to test at no cost -- but note the free tier has no
+    # persistent disk, so the "disk:" block below must be removed too.
+    plan: 0.5c-512mb
     buildCommand: pip install -r requirements.txt
     # --workers 1 is intentional: this app refreshes OwnerRez itself on a
     # background thread once an hour. Multiple gunicorn workers would each
@@ -47,7 +52,14 @@ services:
         sync: false        # optional but recommended -- protects the public webhook URL from spoofed requests
       - key: ANTHROPIC_API_KEY
         sync: false        # optional -- omit to leave /messages showing "AI drafting: Not configured" (manual replies still work)
-    disks:
-      - name: villa-brushy-creek-data
-        mountPath: /var/data
-        sizeGB: 1               # tiny data (schedules/checklists) -- 1GB is already overkill
+    # SINGULAR "disk:", and a mapping rather than a list. A service gets
+    # exactly one disk, so "disks:" with a "- " item is not valid and fails
+    # the blueprint with:
+    #     disks: field disk not found in file.Service
+    # This has now regressed twice by being copy-pasted back from an older
+    # revision (984b6eb fixed it, 87643d2 silently undid it). If you are
+    # editing this file from an old copy, check this block first.
+    disk:
+      name: villa-brushy-creek-data
+      mountPath: /var/data
+      sizeGB: 1                 # tiny data (schedules/checklists) -- 1GB is already overkill
