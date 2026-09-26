@@ -1,0 +1,12 @@
+
+  <div class="equipment-card {{ card_class }}">
+    <div class="equipment-info">
+      <div class="equipment-label">{{ label }}</div>
+      <span class="status-badge {{ status_class }}">{{ status_label }}</span>
+    </div>
+    <form method="POST" action="/pool/toggle">
+      {{ csrf_field }}
+      <input type="hidden" name="device_key" value="{{ key }}">
+      <button type="submit" class="toggle-btn">{{ button_label }}</button>
+    </form>
+  </div>

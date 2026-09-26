@@ -1,0 +1,13 @@
+
+  <div class="setpoint-card">
+    <div class="setpoint-header">
+      <div class="setpoint-label">{{ label }}</div>
+      <span class="status-badge {{ status_class }}">{{ status_label }}</span>
+    </div>
+    <form method="POST" action="/pool/set_temperature" class="setpoint-form">
+      {{ csrf_field }}
+      <input type="hidden" name="device_key" value="{{ key }}">
+      <input type="number" name="temperature" value="{{ value }}" class="temp-input">
+      <button type="submit" class="temp-set-btn">Set</button>
+    </form>
+  </div>

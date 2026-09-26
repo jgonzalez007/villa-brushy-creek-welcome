@@ -1,0 +1,22 @@
+
+  <div class="cleaning-card {{ card_class }}" id="{{ booking_key }}">
+    <div class="cleaning-card-header">
+      <div>
+        <div class="cleaning-guest">{{ first_name }}</div>
+        <div class="cleaning-dates">Arrives {{ arrival_str }} · Departs {{ departure_str }}</div>
+      </div>
+      <div class="cleaning-progress-wrap">
+        {{ ready_badge }}
+        <div class="cleaning-progress-label">{{ done_count }}/{{ total }} done</div>
+        <div class="progress-bar"><div class="progress-fill" style="width:{{ progress_pct }}%"></div></div>
+      </div>
+    </div>
+    <ul class="task-list">
+      {{ checkbox_rows }}
+    </ul>
+    <form method="POST" action="/cleaning/reset">
+      {{ csrf_field }}
+      <input type="hidden" name="booking_key" value="{{ booking_key }}">
+      <button type="submit" class="reset-btn">Reset checklist</button>
+    </form>
+  </div>

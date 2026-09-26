@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Messages — Villa Brushy Creek</title>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/app.css?v=1">
+<style>
+  h1{ margin: 0 0 20px; }
+  h2.section-title{ font-family:'Fraunces', serif; font-weight:500; font-size: 18px; color: var(--creek-deep); margin: 32px 0 12px; }
+  .setup-card{
+    background:#fff; border:1px solid #E2DBC5; border-radius:14px; padding: 16px 20px; margin-bottom: 12px;
+  }
+  .setup-row{ display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom: 8px; }
+  .setup-row:last-child{ margin-bottom: 0; }
+  .setup-label{ font-size: 13px; color:#5C5443; }
+  .setup-url{ font-size: 12px; color:#8A7F63; word-break:break-all; }
+  .setup-btn{
+    font-family:'Work Sans', sans-serif; font-size: 12px; font-weight:500; padding: 7px 14px;
+    border-radius: 100px; border:1px solid var(--creek); background: var(--creek); color:#fff; cursor:pointer;
+  }
+  .setup-btn:hover{ background: var(--creek-deep); }
+  .message-card{
+    background:#fff; border:1px solid #E2DBC5; border-radius:16px; padding: 20px 22px; margin-bottom: 18px;
+  }
+  .message-header{ display:flex; justify-content:space-between; align-items:baseline; gap:12px; flex-wrap:wrap; margin-bottom: 10px; }
+  .message-guest{ font-family:'Fraunces', serif; font-weight:500; font-size: 17px; color: var(--creek-deep); }
+  .message-received{ font-size: 12px; color:#9A9276; }
+  .message-body{
+    background:#F6F1E1; border-radius:10px; padding: 12px 14px; font-size: 14px; color:#5C5443;
+    margin-bottom: 12px; white-space:pre-wrap;
+  }
+  .ai-note{ font-size: 12px; color:#8A3D14; margin-bottom: 10px; }
+  .message-textarea{
+    width:100%; font-family:'Work Sans', sans-serif; font-size: 14px; padding: 10px 12px;
+    border-radius: 9px; border:1px solid #DCD4B8; resize:vertical; margin-bottom: 10px;
+  }
+  .message-actions{ display:flex; justify-content:flex-end; }
+  .send-btn{
+    font-family:'Work Sans', sans-serif; font-size: 13px; font-weight:500; padding: 9px 20px;
+    border-radius: 100px; border:1px solid var(--creek); background: var(--creek); color:#fff; cursor:pointer;
+  }
+  .send-btn:hover{ background: var(--creek-deep); }
+  .message-secondary-actions{ display:flex; gap:10px; margin-top: 10px; flex-wrap:wrap; }
+  .message-secondary-actions form{ margin:0; }
+  .select-btn{
+    font-family:'Work Sans', sans-serif; font-size: 12px; font-weight:500; padding: 7px 14px;
+    border-radius: 100px; border:1px solid var(--clay); background:#fff; color: var(--clay); cursor:pointer;
+  }
+  .delete-btn{
+    font-family:'Work Sans', sans-serif; font-size: 12px; color:#8A7F63; background:none;
+    border:1px solid #DCD4B8; border-radius:100px; padding: 7px 14px; cursor:pointer;
+  }
+</style>
+</head>
+<body>
+<div class="app-shell">
+  {{ sidebar }}
+  <main class="main-content">
+  <div class="wrap">
+  <h1>Messages</h1>
+  {{ error_banner }}
+
+  <div class="setup-card">
+    <div class="setup-row">
+      <span class="setup-label">Webhook subscription</span>
+      <span class="status-badge {{ subscribed_class }}">{{ subscribed_label }}</span>
+    </div>
+    <div class="setup-row">
+      <span class="setup-url">{{ webhook_url }}</span>
+      <form method="POST" action="/messages/setup_webhook">
+        {{ csrf_field }}
+        <button type="submit" class="setup-btn">Register webhook</button>
+      </form>
+    </div>
+    {{ subs_error_banner }}
+    <div class="setup-row">
+      <span class="setup-label">AI drafting</span>
+      <span class="status-badge {{ ai_status_class }}">{{ ai_status_label }}</span>
+    </div>
+  </div>
+
+  <h2 class="section-title">Open messages</h2>
+  {{ cards }}
+
+  <p class="footer-note">Nothing here is ever sent automatically -- every reply is generated only as a suggestion, and only sends when you click "Send reply" yourself, with whatever text is actually in the box at that moment. This page has no separate permission tier -- don't share the URL publicly.</p>
+  </div>
+  </main>
+</div>
+</body>
+</html>

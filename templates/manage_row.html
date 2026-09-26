@@ -1,0 +1,16 @@
+
+      <tr class="{{ row_class }}">
+        <td class="guest-name">{{ first_name }}</td>
+        <td>{{ arrival_str }}</td>
+        <td>{{ departure_str }}</td>
+        <td>{{ nights }} {{ nights_label }}</td>
+        <td>{{ adults }} adults</td>
+        <td>{{ platform }}<br><span class="conf">{{ confirmation }}</span></td>
+        <td>
+          <form method="POST" action="/manage/select">
+            {{ csrf_field }}
+            <input type="hidden" name="booking_key" value="{{ booking_key }}">
+            <button type="submit" class="select-btn" {{ button_disabled }}>{{ button_label }}</button>
+          </form>
+        </td>
+      </tr>

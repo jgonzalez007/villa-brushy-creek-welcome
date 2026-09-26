@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cleaning Checklist — Villa Brushy Creek</title>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/app.css?v=1">
+<style>
+  .wrap{ max-width: 900px; }
+  h1{ font-family:'Fraunces', serif; font-weight:500; font-size: 34px;
+    color: var(--creek-deep); margin: 0 0 6px; }
+  .subtitle{ color:#77705C; margin: 0 0 28px; font-size:14px; }
+  .cleaning-card{
+    background:#fff; border:1px solid #E2DBC5; border-radius:16px;
+    padding: 22px 24px; margin-bottom: 20px;
+  }
+  .cleaning-card-done{ border-color: var(--sage); background: #F7F9F2; }
+  .cleaning-card-header{
+    display:flex; justify-content:space-between; align-items:flex-start;
+    gap: 20px; flex-wrap: wrap; margin-bottom: 16px;
+  }
+  .cleaning-guest{ font-family:'Fraunces', serif; font-weight:500; font-size: 20px; color: var(--creek-deep); }
+  .cleaning-dates{ font-size: 13px; color:#77705C; margin-top: 2px; }
+  .cleaning-progress-wrap{ text-align:right; min-width: 160px; }
+  .ready-badge{
+    display:inline-block; background: var(--sage); color:#fff; font-size: 12px;
+    font-weight:600; padding: 3px 10px; border-radius: 100px; margin-bottom:6px;
+  }
+  .cleaning-progress-label{ font-size: 12px; color:#8A7F63; margin-bottom: 6px; }
+  .progress-bar{ width: 160px; height: 6px; background:#EFEAD9; border-radius: 100px; overflow:hidden; }
+  .progress-fill{ height:100%; background: var(--clay); transition: width 0.2s ease; }
+  .cleaning-card-done .progress-fill{ background: var(--sage); }
+  .task-list{ list-style:none; margin: 0 0 16px; padding:0; border-top:1px solid #EFEAD9; }
+  .task-row{ border-bottom: 1px solid #EFEAD9; }
+  .task-row form{ margin:0; }
+  .task-label{
+    display:flex; align-items:center; gap: 12px; padding: 11px 2px;
+    font-size: 14px; cursor:pointer;
+  }
+  .task-label input[type=checkbox]{ width:18px; height:18px; accent-color: var(--sage); cursor:pointer; }
+  .task-row.task-done .task-label span{ color:#9A9276; text-decoration: line-through; }
+  .reset-btn{
+    font-family:'Work Sans', sans-serif; font-size: 12px; color:#8A7F63;
+    background:none; border:1px solid #DCD4B8; border-radius:100px;
+    padding: 6px 14px; cursor:pointer;
+  }
+  .reset-btn:hover{ border-color: var(--clay); color: var(--clay); }
+  .footer-note{ margin-top: 8px; font-size: 12px; color:#9A9276; }
+</style>
+</head>
+<body>
+<div class="app-shell">
+  {{ sidebar }}
+  <main class="main-content">
+  <div class="wrap">
+  <h1>Cleaning Checklist</h1>
+  <p class="subtitle">Last refreshed: {{ last_updated }} · <a class="back-link" href="/refresh">Refresh now</a></p>
+  {{ error_banner }}
+
+  {{ cards }}
+
+  <p class="footer-note">Checklists are per booking and reset automatically once a booking is no longer upcoming. Checking a box saves immediately — no need to submit anything. This page has no login — don't share the URL publicly.</p>
+  </div>
+  </main>
+</div>
+</body>
+</html>

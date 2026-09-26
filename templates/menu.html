@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Menu — Villa Brushy Creek</title>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/app.css?v=1">
+<style>
+  @media (max-width: 600px){
+  }
+  h1{ margin: 0 0 28px; }
+  .menu-grid{ display:grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+  @media (max-width: 520px){
+    .menu-grid{ grid-template-columns: 1fr; }
+  }
+  .menu-card{
+    display:block; background:#fff; border:1px solid #E2DBC5; border-radius:16px;
+    padding: 22px 20px; text-decoration:none; color: var(--bark);
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+  .menu-card:hover{ border-color: var(--creek); box-shadow: 0 8px 20px -12px rgba(42,32,24,0.3); }
+  .menu-card-title{
+    font-family:'Fraunces', serif; font-weight:500; font-size: 19px; color: var(--creek-deep); margin-bottom: 6px;
+  }
+  .menu-card-desc{ font-size: 13px; color:#77705C; line-height:1.5; }
+</style>
+</head>
+<body>
+<div class="app-shell">
+  {{ sidebar }}
+  <main class="main-content">
+  <div class="wrap">
+  <h1>Villa Brushy Creek</h1>
+
+  <div class="menu-grid">
+    <a class="menu-card" href="/">
+      <div class="menu-card-title">Welcome Screen</div>
+      <div class="menu-card-desc">The guest-facing display showing the next arriving guest -- what's shown on the lobby tablet.</div>
+    </a>
+    <a class="menu-card" href="/manage">
+      <div class="menu-card-title">Manage Arrivals</div>
+      <div class="menu-card-desc">Pick which guest shows on the welcome screen -- automatic (soonest arrival) or manually pinned.</div>
+    </a>
+    <a class="menu-card" href="/cleaning">
+      <div class="menu-card-title">Cleaning Checklist</div>
+      <div class="menu-card-desc">Turnover checklist per guest, with progress tracking between stays.</div>
+    </a>
+    <a class="menu-card" href="/pool">
+      <div class="menu-card-title">Pool Control</div>
+      <div class="menu-card-desc">Live readings, temperature, equipment on/off, and recurring schedules.</div>
+    </a>
+    <a class="menu-card" href="/doors">
+      <div class="menu-card-title">Door Codes</div>
+      <div class="menu-card-desc">Send Kwikset keypad codes to arriving guests, and manage all codes sent.</div>
+    </a>
+    <a class="menu-card" href="/users">
+      <div class="menu-card-title">Users</div>
+      <div class="menu-card-desc">Add or remove logins, reset passwords.</div>
+    </a>
+  </div>
+  </div>
+  </main>
+</div>
+</body>
+</html>

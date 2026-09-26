@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Door Codes — Villa Brushy Creek</title>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,500;9..144,600&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/app.css?v=1">
+<style>
+  .wrap{ max-width: 980px; }
+  h1{ font-family:'Fraunces', serif; font-weight:500; font-size: 34px;
+    color: var(--creek-deep); margin: 0 0 6px; }
+  .subtitle{ color:#77705C; margin: 0 0 20px; font-size:14px; }
+  .controls{ display:flex; gap:14px; margin: 20px 0 24px; flex-wrap:wrap; align-items:center; }
+  .controls form{ margin:0; display:flex; gap:14px; align-items:center; flex-wrap:wrap; }
+  .controls select{
+    font-family:'Work Sans', sans-serif; font-size: 14px;
+    padding: 9px 12px; border-radius: 9px; border:1px solid #DCD4B8; background:#fff;
+  }
+  .controls-label{ font-size: 12px; color:#8A7F63; margin-right: -6px; }
+  .time-arrow{ color:#9A9276; font-size: 13px; }
+  table{ width:100%; border-collapse: collapse; background:#fff;
+    border-radius: 14px; overflow:hidden; border:1px solid #E2DBC5; }
+  .table-scroll{ overflow-x:auto; -webkit-overflow-scrolling:touch; margin-bottom: 20px; }
+  .table-scroll table{ min-width: 900px; }
+  th{
+    text-align:left; font-size: 11px; text-transform:uppercase; letter-spacing:0.08em;
+    color:#8A7F63; padding: 14px 16px; border-bottom: 1px solid #E2DBC5; background:#FAF6E9;
+  }
+  .status-badge{
+    display:inline-block; font-size: 11px; font-weight:600; padding: 2px 9px;
+    border-radius: 100px;
+  }
+  .row-send-form{ display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin:0; }
+  .row-time-select{
+    font-family:'Work Sans', sans-serif; font-size: 12px;
+    padding: 6px 8px; border-radius: 7px; border:1px solid #DCD4B8; background:#fff;
+  }
+  .select-btn{
+    font-family:'Work Sans', sans-serif; font-size: 13px; font-weight:500;
+    padding: 8px 14px; border-radius: 100px; border:1px solid var(--clay);
+    background:#fff; color: var(--clay); cursor:pointer; white-space:nowrap;
+  }
+  .select-btn[disabled]{
+    border-color:#DCD4B8; color:#9A9276; cursor:default; background:#F3F0DD;
+  }
+  .delete-btn{
+    font-family:'Work Sans', sans-serif; font-size: 12px; color:#8A7F63;
+    background:none; border:1px solid #DCD4B8; border-radius:100px;
+    padding: 6px 14px; cursor:pointer;
+  }
+  .expired-row{ opacity: 0.6; }
+  .section-title{
+    font-family:'Fraunces', serif; font-weight:500; font-size: 20px;
+    color: var(--creek-deep); margin: 36px 0 14px;
+  }
+  .manual-code-card{
+    background:#fff; border:1px solid #E2DBC5; border-radius:14px;
+    padding: 18px 20px; margin-top: 8px;
+  }
+  .manual-code-title{
+    font-family:'Fraunces', serif; font-weight:500; font-size: 17px; color: var(--creek-deep); margin-bottom: 4px;
+  }
+  .manual-code-hint{ font-size: 13px; color:#77705C; margin: 0 0 16px; }
+  .manual-code-form{ display:flex; flex-wrap:wrap; gap: 14px; align-items:flex-end; }
+  .form-field select, .form-field input[type=text], .form-field input[type=date], .form-field input[type=time]{
+    font-family:'Work Sans', sans-serif; font-size: 13px;
+    padding: 8px 10px; border-radius: 7px; border:1px solid #DCD4B8;
+  }
+  .checkbox-label{
+    display:flex; align-items:center; gap:8px; font-size: 13px; color: var(--bark);
+    text-transform:none; letter-spacing:normal; cursor:pointer; padding-bottom: 8px;
+  }
+  .checkbox-label input{ width:16px; height:16px; accent-color: var(--sage); }
+  .manual-date-range{ display:flex; gap:14px; flex-wrap:wrap; }
+  .manual-date-range .form-field{ flex-direction:row; align-items:center; gap:6px; }
+  .manual-date-range input[type=date]{ width: 140px; }
+  .manual-date-range input[type=time]{ width: 90px; }
+  .add-schedule-btn{
+    font-family:'Work Sans', sans-serif; font-size: 12px; font-weight:500;
+    padding: 9px 18px; border-radius: 100px; border:1px solid var(--creek);
+    background: var(--creek); color:#fff; cursor:pointer;
+  }
+  .add-schedule-btn:hover{ background: var(--creek-deep); }
+</style>
+</head>
+<body>
+<div class="app-shell">
+  {{ sidebar }}
+  <main class="main-content">
+  <div class="wrap">
+  <h1>Door Codes</h1>
+  <p class="subtitle">Sends a code (last 4 of the guest's phone) valid only for their stay dates.</p>
+  {{ error_banner }}
+
+  <form method="GET" action="/doors" class="controls">
+    <input type="hidden" name="year" id="year-field" value="{{ selected_year }}">
+    <input type="hidden" name="month" id="month-field" value="{{ selected_month }}">
+    <select name="device_id" onchange="this.form.submit()">
+      {{ lock_options }}
+    </select>
+    <select onchange="
+      var v=this.value.split('-');
+      document.getElementById('year-field').value=v[0];
+      document.getElementById('month-field').value=v[1];
+      this.form.submit();">
+      {{ month_options }}
+    </select>
+    <span class="controls-label">Default access window:</span>
+    <select name="default_checkin" onchange="this.form.submit()">
+      {{ default_checkin_options }}
+    </select>
+    <span class="time-arrow">&rarr;</span>
+    <select name="default_checkout" onchange="this.form.submit()">
+      {{ default_checkout_options }}
+    </select>
+  </form>
+
+  <div class="table-scroll">
+  <table>
+    <thead>
+      <tr>
+        <th>Guest</th><th>Arrival</th><th>Departure</th><th>Phone (last 4)</th><th>Deposit</th><th>Agreement</th><th>Status</th><th>Access window</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{ guest_rows }}
+    </tbody>
+  </table>
+  </div>
+
+  <div class="manual-code-card">
+    <div class="manual-code-title">Add a code manually</div>
+    <p class="manual-code-hint">For anyone who isn't a guest -- a cleaner, a contractor, yourself. Not tied to any booking.</p>
+    <form method="POST" action="/doors/manual_add" class="manual-code-form" id="manual-code-form">
+      {{ csrf_field }}
+      <div class="form-field">
+        <label>Lock</label>
+        <select name="device_id" required>
+          {{ lock_options }}
+        </select>
+      </div>
+      <div class="form-field">
+        <label>Name</label>
+        <input type="text" name="name" maxlength="14" placeholder="e.g. Cleaner" required>
+      </div>
+      <div class="form-field">
+        <label>Code</label>
+        <input type="text" name="code" inputmode="numeric" pattern="[0-9]{4,8}" maxlength="8" placeholder="4-8 digits" required>
+      </div>
+      <div class="form-field never-expire-field">
+        <label class="checkbox-label">
+          <input type="checkbox" name="never_expire" id="never_expire_check"
+                 onchange="document.getElementById('manual-date-range').style.display = this.checked ? 'none' : 'flex';">
+          Never expires
+        </label>
+      </div>
+      <div class="manual-date-range" id="manual-date-range">
+        <div class="form-field">
+          <label>Starts</label>
+          <input type="date" name="start_date">
+          <input type="time" name="start_time" value="00:00">
+        </div>
+        <div class="form-field">
+          <label>Ends</label>
+          <input type="date" name="end_date">
+          <input type="time" name="end_time" value="23:59">
+        </div>
+      </div>
+      <button type="submit" class="add-schedule-btn">Add code</button>
+    </form>
+  </div>
+
+  <h2 class="section-title" id="all-codes">All Door Codes</h2>
+  <div class="table-scroll">
+  <table>
+    <thead>
+      <tr>
+        <th>Lock</th><th>Guest</th><th>Code</th><th>Slot</th><th>Valid window</th><th>Status</th><th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {{ all_codes_rows }}
+    </tbody>
+  </table>
+  </div>
+
+  <p class="footer-note">"Sent" only reflects codes this app itself has created -- Kwikset's API has no way to read codes back off the physical lock, so this can't detect codes added via the Kwikset app or keypad. Each guest's access window defaults to the setting above but can be changed per guest before sending. "Expired" is based on the code's own valid-until time, not a live check against the lock -- Kwikset's API can't confirm whether an expired code has actually stopped working, only that its scheduled window has passed. This page has no login — don't share the URL publicly, since it can create real door access codes.</p>
+  </div>
+  </main>
+</div>
+</body>
+</html>
