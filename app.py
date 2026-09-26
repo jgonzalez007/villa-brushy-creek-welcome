@@ -2575,10 +2575,22 @@ def _month_options(selected_year, selected_month):
     return options
 
 
-_TIME_OPTION_VALUES = [f"{h:02d}:{m:02d}" for h in range(24) for m in (0, 30)]
+DEFAULT_DOOR_CHECK_IN = "15:10"
+DEFAULT_DOOR_CHECK_OUT = "11:30"
 
-DEFAULT_DOOR_CHECK_IN = "16:00"
-DEFAULT_DOOR_CHECK_OUT = "11:00"
+# Half-hour grid, plus whichever defaults are configured above.
+#
+# The defaults MUST appear in this list. doors() falls back to them when a
+# submitted value isn't a member, and _time_options_html() marks an option
+# "selected" only on an exact match -- so a default that isn't in the grid
+# leaves the <select> with nothing selected and the browser silently shows
+# the first entry, 12:00 AM. A 3:10pm check-in is not on a half-hour
+# boundary, so it is unioned in here rather than the grid being widened to
+# ten-minute steps, which would make this a 144-item dropdown on a phone.
+_TIME_OPTION_VALUES = sorted(
+    {f"{h:02d}:{m:02d}" for h in range(24) for m in (0, 30)}
+    | {DEFAULT_DOOR_CHECK_IN, DEFAULT_DOOR_CHECK_OUT}
+)
 
 
 def _time_options_html(selected_value):
