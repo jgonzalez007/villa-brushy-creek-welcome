@@ -2,6 +2,16 @@ services:
   - type: web
     name: villa-brushy-creek-welcome
     runtime: python
+    # Declared explicitly so the branch is set here rather than inherited.
+    # When the service and the Blueprint live in the same repo -- as they do
+    # here -- Render takes the service's branch from the Blueprint and makes
+    # the dashboard's branch field read-only, so it cannot be changed there.
+    # This repo has only ever had "main".
+    #
+    # Leave this out if preview environments are ever enabled: a pinned
+    # branch overrides the pull request's own branch in previews, which
+    # defeats the point of them.
+    branch: main
     # Render retired the old named tiers ("starter", "standard", ...) in
     # favour of explicit CPU/RAM plan IDs. "0.5c-512mb" is what "starter"
     # became: same 0.5 CPU / 512 MB, same $7/mo, always-on.
