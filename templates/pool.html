@@ -10,103 +10,103 @@
   body{ font-size: 14px; }
   .wrap{ max-width: 900px; }
   h1{ font-family:'Fraunces', serif; font-weight:500; font-size: 24px;
-    color: var(--creek-deep); margin: 8px 0 4px; display:inline-block; }
-  .subtitle{ color:#77705C; margin: 0 0 16px; font-size:12px; }
-  .back-link{ font-size: 12px; color: var(--creek); text-decoration:none; }
+    color: var(--text); margin: 8px 0 4px; display:inline-block; }
+  .subtitle{ color: var(--text-dim); margin: 0 0 16px; font-size:12px; }
+  .back-link{ font-size: 12px; color: var(--accent); text-decoration:none; }
   .online-badge{
     display:inline-block; font-size: 11px; font-weight:600; padding: 2px 8px;
     border-radius: 100px; margin-left: 10px; vertical-align: middle;
   }
-  .online-yes{ background: var(--sage); color:#fff; }
-  .online-no{ background:#C1652F; color:#fff; }
+  .online-yes{ background: var(--sage); color: var(--on-accent); }
+  .online-no{ background: var(--clay); color: var(--on-accent); }
   .error-banner{
-    background:#FBEAE0; border:1px solid #E8B99B; color:#8A3D14;
+    background: var(--danger-bg); border:1px solid var(--danger-border); color: var(--danger-text);
     padding:10px 14px; border-radius:10px; margin-bottom:14px; font-size:13px;
   }
-  .empty-state{ text-align:center; color:#9A9276; padding: 14px; font-size: 13px; }
+  .empty-state{ text-align:center; color: var(--text-faint); padding: 14px; font-size: 13px; }
   .section-title{
     font-family:'Fraunces', serif; font-weight:500; font-size: 15px;
-    color: var(--creek-deep); margin: 18px 0 8px;
+    color: var(--text); margin: 18px 0 8px;
   }
   .sensor-grid{ display:flex; gap:10px; flex-wrap:wrap; }
   .sensor-card{
-    background:#fff; border:1px solid #E2DBC5; border-radius:12px;
+    background: var(--surface); border:1px solid var(--border); border-radius:12px;
     padding: 10px 16px; min-width: 90px; text-align:center;
   }
-  .sensor-label{ font-size: 10px; text-transform:uppercase; letter-spacing:0.06em; color:#8A7F63; margin-bottom:3px; }
-  .sensor-value{ font-family:'Fraunces', serif; font-weight:500; font-size: 20px; color: var(--creek-deep); }
+  .sensor-label{ font-size: 10px; text-transform:uppercase; letter-spacing:0.06em; color: var(--text-faint); margin-bottom:3px; }
+  .sensor-value{ font-family:'Fraunces', serif; font-weight:500; font-size: 20px; color: var(--text); }
   .setpoint-grid{ display:grid; grid-template-columns: 1fr 1fr; gap:10px; }
-  .setpoint-card{ background:#fff; border:1px solid #E2DBC5; border-radius:12px; padding: 10px 12px; }
+  .setpoint-card{ background: var(--surface); border:1px solid var(--border); border-radius:12px; padding: 10px 12px; }
   .setpoint-header{ display:flex; justify-content:space-between; align-items:center; margin-bottom: 8px; }
-  .setpoint-label{ font-family:'Fraunces', serif; font-weight:500; font-size: 13px; color: var(--creek-deep); }
+  .setpoint-label{ font-family:'Fraunces', serif; font-weight:500; font-size: 13px; color: var(--text); }
   .setpoint-form{ display:flex; gap:6px; margin:0; }
   .temp-input{
     width: 56px; font-family:'Work Sans', sans-serif; font-size: 13px;
-    padding: 5px 6px; border-radius: 7px; border:1px solid #DCD4B8;
+    padding: 5px 6px; border-radius: 7px; border:1px solid var(--border);
   }
   .temp-set-btn{
     font-family:'Work Sans', sans-serif; font-size: 11px; font-weight:500;
-    padding: 5px 12px; border-radius: 100px; border:1px solid var(--creek);
-    background: var(--creek); color:#fff; cursor:pointer;
+    padding: 5px 12px; border-radius: 100px; border:1px solid var(--accent);
+    background: var(--accent); color: var(--on-accent); cursor:pointer;
   }
-  .temp-set-btn:hover{ background: var(--creek-deep); }
+  .temp-set-btn:hover{ background: var(--accent-hover); }
   .equipment-grid{ display:grid; grid-template-columns: repeat(3, 1fr); gap:8px; }
   .equipment-card{
-    background:#fff; border:1px solid #E2DBC5; border-radius:12px;
+    background: var(--surface); border:1px solid var(--border); border-radius:12px;
     padding: 9px 11px; display:flex; justify-content:space-between; align-items:center; gap:8px;
   }
-  .equipment-card-on{ border-color: var(--sage); background:#F7F9F2; }
-  .equipment-label{ font-size: 12px; font-weight:500; color: var(--bark); margin-bottom: 3px; }
+  .equipment-card-on{ border-color: var(--sage); background: var(--surface-2); }
+  .equipment-label{ font-size: 12px; font-weight:500; color: var(--text); margin-bottom: 3px; }
   .status-badge{
     display:inline-block; font-size: 10px; font-weight:600; padding: 1px 7px;
     border-radius: 100px;
   }
   .toggle-btn{
     font-family:'Work Sans', sans-serif; font-size: 11px; font-weight:500;
-    padding: 5px 10px; border-radius: 100px; border:1px solid #DCD4B8;
-    background:#fff; color: var(--bark); cursor:pointer; white-space:nowrap;
+    padding: 5px 10px; border-radius: 100px; border:1px solid var(--border);
+    background: var(--surface); color: var(--text); cursor:pointer; white-space:nowrap;
   }
   .toggle-btn:hover{ border-color: var(--clay); color: var(--clay); }
-  .footer-note{ margin-top: 18px; font-size: 11px; color:#9A9276; }
+  .footer-note{ margin-top: 18px; font-size: 11px; color: var(--text-faint); }
   .schedule-row{
-    background:#fff; border:1px solid #E2DBC5; border-radius:12px;
+    background: var(--surface); border:1px solid var(--border); border-radius:12px;
     padding: 9px 12px; display:flex; align-items:center; gap:10px; margin-bottom:8px;
   }
   .schedule-row-disabled{ opacity: 0.55; }
   .schedule-info{ flex:1; min-width:0; }
-  .schedule-device{ font-size: 13px; font-weight:500; color: var(--bark); }
-  .schedule-times{ font-size: 11px; color:#77705C; margin-top:2px; }
+  .schedule-device{ font-size: 13px; font-weight:500; color: var(--text); }
+  .schedule-times{ font-size: 11px; color: var(--text-dim); margin-top:2px; }
   .schedule-btn-form{ margin:0; }
   .delete-btn{
     font-family:'Work Sans', sans-serif; font-size: 11px; font-weight:500;
-    padding: 5px 10px; border-radius: 100px; border:1px solid #E8B99B;
-    background:#fff; color:#8A3D14; cursor:pointer; white-space:nowrap;
+    padding: 5px 10px; border-radius: 100px; border:1px solid var(--danger-border);
+    background: var(--surface); color: var(--danger-text); cursor:pointer; white-space:nowrap;
   }
-  .delete-btn:hover{ background:#FBEAE0; }
+  .delete-btn:hover{ background: var(--danger-bg); }
   .add-schedule-card{
-    background:#fff; border:1px solid #E2DBC5; border-radius:12px;
+    background: var(--surface); border:1px solid var(--border); border-radius:12px;
     padding: 14px; margin-top: 10px;
   }
   .add-schedule-form{ display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end; }
   .form-field select, .form-field input[type=time]{
     font-family:'Work Sans', sans-serif; font-size: 13px;
-    padding: 6px 8px; border-radius: 7px; border:1px solid #DCD4B8;
+    padding: 6px 8px; border-radius: 7px; border:1px solid var(--border);
   }
   .days-picker{ display:flex; gap:4px; }
   .day-chip{ position:relative; }
   .day-chip input{ position:absolute; opacity:0; width:100%; height:100%; margin:0; cursor:pointer; }
   .day-chip span{
     display:inline-flex; align-items:center; justify-content:center;
-    width: 30px; height: 30px; border-radius: 8px; border:1px solid #DCD4B8;
-    font-size: 11px; color:#77705C; cursor:pointer;
+    width: 30px; height: 30px; border-radius: 8px; border:1px solid var(--border);
+    font-size: 11px; color: var(--text-dim); cursor:pointer;
   }
-  .day-chip input:checked + span{ background: var(--creek); border-color: var(--creek); color:#fff; }
+  .day-chip input:checked + span{ background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
   .add-schedule-btn{
     font-family:'Work Sans', sans-serif; font-size: 12px; font-weight:500;
-    padding: 7px 16px; border-radius: 100px; border:1px solid var(--creek);
-    background: var(--creek); color:#fff; cursor:pointer;
+    padding: 7px 16px; border-radius: 100px; border:1px solid var(--accent);
+    background: var(--accent); color: var(--on-accent); cursor:pointer;
   }
-  .add-schedule-btn:hover{ background: var(--creek-deep); }
+  .add-schedule-btn:hover{ background: var(--accent-hover); }
   @media (max-width: 700px){
     .equipment-grid{ grid-template-columns: repeat(2, 1fr); }
   }
