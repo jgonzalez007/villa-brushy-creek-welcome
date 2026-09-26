@@ -49,7 +49,24 @@
     background:none; border:1px solid var(--border); border-radius:100px;
     padding: 6px 14px; cursor:pointer;
   }
-  .expired-row{ opacity: 0.6; }
+  /* Dim an expired row by fading its TEXT, not with opacity on the row.
+     opacity creates a stacking context that applies to the whole subtree,
+     so a child cannot opt back out -- .expired-row .delete-btn{opacity:1}
+     does nothing. The old rule faded the Remove button along with
+     everything else, which made a perfectly working button read as
+     disabled. */
+  .expired-row td{ color: var(--text-faint); }
+  .expired-row .guest-name{ color: var(--text-faint); }
+
+  /* The action stays at full strength: an expired code is precisely the
+     one you want to clear out, so Remove is the affirmative action on
+     these rows rather than the dimmest thing in them. */
+  .expired-row .delete-btn{
+    color: var(--clay); border-color: var(--clay);
+  }
+  .expired-row .delete-btn:hover{
+    background: var(--clay); color: var(--on-accent);
+  }
   .section-title{
     font-family:'Fraunces', serif; font-weight:500; font-size: 20px;
     color: var(--text); margin: 36px 0 14px;
