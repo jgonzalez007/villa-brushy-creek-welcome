@@ -194,21 +194,47 @@ to whenever a message comes in.
 
 ### One-time setup
 
-1. Set `PUBLIC_BASE_URL` in Render's Environment tab to your real
+**Important:** OwnerRez webhooks only work for OAuth-authenticated apps --
+never for the username+token (Personal Access Token) auth this app uses
+for everything else. There is no API call that registers a webhook for
+that kind of connection, and no button in `/messages` that does it either
+-- it's a one-time setup in OwnerRez's own UI:
+
+1. Email `partnerhelp@ownerrez.com` briefly describing the app (OwnerRez
+   asks for this before you create an OAuth app).
+2. Set `PUBLIC_BASE_URL` in Render's Environment tab to your real
    deployed URL, e.g. `https://villa-brushy-creek-welcome.onrender.com`
-   (no trailing slash).
-2. Optionally set `OWNERREZ_WEBHOOK_SECRET` to a random string first --
-   without one, anyone who discovers the webhook URL could post fake
-   messages into your inbox. Generate one the same way as `SECRET_KEY`:
-   ```bash
-   python3 -c "import secrets; print(secrets.token_hex(32))"
-   ```
-3. Visit `/messages` and click **Register webhook** under "Webhook
-   subscription" -- this calls OwnerRez's API to start sending message
-   events to your app. The status badge should flip to "Subscribed."
-4. Send yourself a test message as a guest (OwnerRez has a Sandbox
-   messaging feature for exactly this) and confirm it shows up on
-   `/messages`.
+   (no trailing slash). `/messages` shows you the exact webhook URL to
+   use in the next step once this is set.
+3. In OwnerRez, go to the account dropdown (top-right) -> **Developer/API
+   Settings** -> create a new **OAuth App**. Fill in Name, Homepage URL,
+   an OAuth Redirect URL (any `https://` URL works for self-use), and the
+   **Webhook URL/User/Password** fields -- URL is
+   `<PUBLIC_BASE_URL>/webhooks/ownerrez`, and the username/password are
+   ones you choose (OwnerRez sends them back to your app via HTTP Basic
+   Auth on every delivery).
+4. On that app's **Users** tab, click **Grant Access To Me** -- this is
+   the self-use shortcut; self-use Message webhooks don't need a
+   partnership agreement, but skipping this step means nothing ever gets
+   sent.
+5. Set `OWNERREZ_WEBHOOK_USER` / `OWNERREZ_WEBHOOK_PASSWORD` in Render's
+   Environment tab to the same username/password you chose in step 3, so
+   `/webhooks/ownerrez` can verify deliveries actually came from OwnerRez.
+   Leaving these unset makes the endpoint accept unauthenticated requests
+   -- fine for a first test, not recommended to leave that way.
+6. Use OwnerRez's **"Send a Test Webhook"** button (on the same app
+   settings page) to confirm delivery -- note this sends a generic
+   `action: "webhook_test"` payload that `/messages` deliberately ignores
+   (it's not a real message), so use it only to confirm your endpoint
+   returns a 2xx, not to see a message appear. For an actual guest message,
+   send yourself one via OwnerRez's Sandbox Messaging feature and confirm
+   it shows up on `/messages`.
+
+Because the Webhook URL is global to the OAuth App, OwnerRez will also
+send booking/guest/property change events to the same endpoint --
+`/webhooks/ownerrez` acknowledges (200) and discards anything that isn't
+an actual sent (non-draft) message, so `/messages` only ever fills up
+with real guest/host conversation.
 
 ### AI-suggested drafts
 

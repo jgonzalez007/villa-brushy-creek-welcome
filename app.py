@@ -200,11 +200,19 @@ ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "admin")
 # by their own design, the only way to learn about a new guest message is a
 # webhook they push the moment one arrives. So /webhooks/ownerrez receives
 # and stores those events ourselves; /messages reads from that local store.
-# OWNERREZ_WEBHOOK_SECRET is optional but recommended -- without it, anyone
-# who finds the webhook URL could post fake messages into your inbox.
-OWNERREZ_WEBHOOK_SECRET = os.environ.get("OWNERREZ_WEBHOOK_SECRET")
-# Used to build the callback URL when registering the webhook subscription
-# with OwnerRez -- set this to your real Render URL, e.g.
+#
+# IMPORTANT: OwnerRez webhooks only work for OAuth-authenticated apps, not
+# the username+token (Personal Access Token) auth this app otherwise uses
+# for everything else. There is no API call that registers this -- you set
+# a Webhook URL/User/Password directly on an OAuth App's Developer/API
+# settings page in OwnerRez (then, on that app's Users tab, "Grant Access
+# To Me" for self-use). OwnerRez then calls this URL using HTTP Basic Auth
+# with whatever user/password you set there -- set the same values here so
+# _webhook_authorized() can check them.
+OWNERREZ_WEBHOOK_USER = os.environ.get("OWNERREZ_WEBHOOK_USER")
+OWNERREZ_WEBHOOK_PASSWORD = os.environ.get("OWNERREZ_WEBHOOK_PASSWORD")
+# Used only to display the callback URL to put into that OwnerRez OAuth App
+# config -- set this to your real Render URL, e.g.
 # https://villa-brushy-creek-welcome.onrender.com
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")  # optional -- AI drafts
@@ -319,6 +327,22 @@ def init_db():
         );
         CREATE INDEX IF NOT EXISTS idx_msg_open ON message_events (handled, category);
     """)
+    db.commit()
+
+    # Migration: message_events predates the real OwnerRez webhook payload
+    # shape, which includes a GUID ("id") per delivery that we need to
+    # dedupe retried webhooks against (OwnerRez retries failed deliveries
+    # up to 10x and says duplicates are possible even on success). Added
+    # via ALTER TABLE rather than in the CREATE above so it applies to the
+    # already-deployed table on the Render disk, not just fresh installs.
+    existing_cols = {row["name"] for row in db.execute("PRAGMA table_info(message_events)")}
+    if "webhook_event_id" not in existing_cols:
+        db.execute("ALTER TABLE message_events ADD COLUMN webhook_event_id TEXT")
+        db.commit()
+    db.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_msg_webhook_event_id "
+        "ON message_events (webhook_event_id) WHERE webhook_event_id IS NOT NULL"
+    )
     db.commit()
 
     # Seed the bootstrap admin account with NO password set -- the app's
@@ -589,51 +613,76 @@ def _extract_validation(mapping):
     return None
 
 
+# from_role values seen on real thread_message webhook payloads that mean
+# "this is our own outgoing message" -- anything else (most commonly
+# "guest", but there's no full published enum) is treated as inbound.
+_OWNER_SIDE_ROLES = {"owner", "manager", "staff", "co_host", "cohost"}
+
+
 def parse_message_event(payload):
-    """Best-effort extraction of a message event from an OwnerRez webhook
-    body. Field names vary across payload shapes -- fallbacks are used
-    everywhere, and the raw payload is always kept so nothing is lost."""
-    entity = payload.get("entity") or payload.get("resource") or payload.get("data") or payload
+    """Extraction of a message event from a real OwnerRez webhook delivery.
 
-    category = _first(payload, ["category", "type", "resource_type", "event_type"]) or "message"
-    action = _first(payload, ["action", "event", "operation"])
-    thread_id = _first(entity, ["threadId", "thread_id", "conversation_id", "conversationId"])
-    booking_id = _first(entity, ["booking_id", "bookingId", "booking"])
-    body = _first(entity, ["body", "message", "text", "content"])
+    Confirmed directly against a live delivery (2026-09-26) -- the actual
+    shape is a flat envelope, not the category/thread_id/guest/body shape
+    this was originally ported with:
 
-    guest = None
-    guest_obj = entity.get("guest") if isinstance(entity, dict) else None
-    if isinstance(guest_obj, dict):
-        guest = (
-            " ".join(x for x in [guest_obj.get("first_name"), guest_obj.get("last_name")] if x).strip()
-            or guest_obj.get("name")
-        )
-    guest = guest or _first(entity, ["guest_name", "from", "sender"])
+        {
+          "id": "<webhook delivery GUID>", "user_id": ..., "action": "entity_create",
+          "entity_type": "thread_message", "entity_id": ...,
+          "entity": {
+            "id": ..., "body": "...", "date_utc": "...", "is_draft": false,
+            "from_contact_id": ..., "from_role": "owner",
+            "thread": {"id": ..., "booking_id": ..., "property_id": ..., "channel": ..., "type": ...}
+          }
+        }
 
-    is_incoming = _first(entity, ["is_incoming", "incoming", "from_guest", "inbound"])
-    direction = _first(entity, ["direction"])
-    if is_incoming is None and isinstance(direction, str):
-        is_incoming = direction.lower() in ("in", "inbound", "incoming", "from_guest")
+    Note there's no guest name/email anywhere in this payload -- OwnerRez's
+    webhook only tells you *that* a message exists, keyed by booking_id;
+    the guest name is filled in separately via fetch_booking_guest_name()
+    when the message is actually displayed.
+    """
+    entity = payload.get("entity") if isinstance(payload.get("entity"), dict) else {}
+    thread = entity.get("thread") if isinstance(entity.get("thread"), dict) else {}
+
+    from_role = entity.get("from_role")
+    is_incoming = None
+    if isinstance(from_role, str):
+        is_incoming = from_role.strip().lower() not in _OWNER_SIDE_ROLES
 
     return {
-        "category": str(category).lower() if category else None,
-        "action": action,
-        "thread_id": thread_id,
-        "booking_id": booking_id,
-        "guest": guest,
-        "body": body,
+        "webhook_event_id": payload.get("id"),
+        "category": payload.get("entity_type"),
+        "action": payload.get("action"),
+        "thread_id": thread.get("id"),
+        "booking_id": thread.get("booking_id"),
+        "guest": None,
+        "body": entity.get("body"),
         "is_incoming": is_incoming,
+        "is_draft": bool(entity.get("is_draft")),
         "raw": payload,
     }
 
 
 def db_add_message_event(event):
+    """Inserts a message event, deduping on webhook_event_id -- OwnerRez
+    explicitly documents that retried webhooks can arrive more than once
+    and recommends dedup by the payload's own "id". Returns (event_id,
+    is_new) so callers can tell a fresh message from a repeat delivery."""
     db = get_db()
+    webhook_event_id = event.get("webhook_event_id")
+
+    if webhook_event_id:
+        existing = db.execute(
+            "SELECT id FROM message_events WHERE webhook_event_id = ?", (webhook_event_id,)
+        ).fetchone()
+        if existing:
+            return existing["id"], False
+
     cur = db.execute(
         """INSERT INTO message_events
            (received_utc, category, action, thread_id, booking_id, guest,
-            body, is_incoming, raw)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            body, is_incoming, raw, webhook_event_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             event.get("category"),
@@ -644,10 +693,11 @@ def db_add_message_event(event):
             event.get("body"),
             (1 if event.get("is_incoming") else 0) if event.get("is_incoming") is not None else None,
             json.dumps(event.get("raw"), default=str) if event.get("raw") is not None else None,
+            webhook_event_id,
         ),
     )
     db.commit()
-    return cur.lastrowid
+    return cur.lastrowid, True
 
 
 def db_list_open_messages(limit=100):
@@ -656,7 +706,7 @@ def db_list_open_messages(limit=100):
     return db.execute(
         """SELECT * FROM message_events
            WHERE handled = 0
-             AND (category = 'message' OR category IS NULL)
+             AND (category = 'thread_message' OR category IS NULL)
              AND (is_incoming = 1 OR is_incoming IS NULL)
            ORDER BY id DESC
            LIMIT ?""",
@@ -891,6 +941,43 @@ def fetch_guest_phone(guest_id):
     return default_phone.get("number")
 
 
+def fetch_booking_guest_name(booking_id):
+    """Looks up a booking's guest name by ID -- the message webhook only
+    gives us a booking_id, never a guest name, so /messages resolves it
+    with this on display. Returns None on any failure; callers should
+    show a booking-id fallback rather than let this block the page."""
+    if not OWNERREZ_USERNAME or not OWNERREZ_TOKEN or not booking_id:
+        return None
+    headers = {
+        "User-Agent": "Villa Brushy Creek Welcome Screen/1.0",
+        "Accept": "application/json",
+    }
+    try:
+        resp = requests.get(
+            f"{API_BASE}/bookings/{booking_id}",
+            params={"include_guest": "true"},
+            auth=(OWNERREZ_USERNAME, OWNERREZ_TOKEN),
+            headers=headers,
+            timeout=15,
+        )
+        resp.raise_for_status()
+        booking = resp.json()
+    except Exception as e:
+        print(f"[{datetime.datetime.now()}] Booking guest-name lookup failed "
+              f"for booking_id={booking_id}: {e}", file=sys.stderr)
+        return None
+
+    guest = booking.get("guest") or {}
+    name = " ".join(x for x in [guest.get("first_name"), guest.get("last_name")] if x).strip()
+    return name or None
+
+
+def db_save_message_guest(event_id, guest_name):
+    db = get_db()
+    db.execute("UPDATE message_events SET guest = ? WHERE id = ?", (guest_name, event_id))
+    db.commit()
+
+
 def phone_last4(phone_number):
     """'+1 620-899-8308' -> '8308'. Returns None if there aren't at least
     4 digits to work with."""
@@ -967,34 +1054,15 @@ def _raise_with_body(resp):
     )
 
 
-def ownerrez_create_webhook_subscription(url, category):
-    """POST /v2/webhooksubscriptions -- confirmed directly against the
-    author's own working ownerrez-mcp-node implementation."""
-    if not OWNERREZ_USERNAME or not OWNERREZ_TOKEN:
-        raise RuntimeError("OwnerRez credentials aren't configured.")
-    resp = requests.post(
-        f"{API_BASE}/webhooksubscriptions",
-        json={"WebhookUrl": url, "category": category},
-        auth=(OWNERREZ_USERNAME, OWNERREZ_TOKEN),
-        headers=_ownerrez_headers(),
-        timeout=15,
-    )
-    _raise_with_body(resp)
-    return resp.json()
-
-
-def ownerrez_list_webhook_subscriptions():
-    if not OWNERREZ_USERNAME or not OWNERREZ_TOKEN:
-        raise RuntimeError("OwnerRez credentials aren't configured.")
-    resp = requests.get(
-        f"{API_BASE}/webhooksubscriptions",
-        auth=(OWNERREZ_USERNAME, OWNERREZ_TOKEN),
-        headers=_ownerrez_headers(),
-        timeout=15,
-    )
-    _raise_with_body(resp)
-    payload = resp.json()
-    return payload.get("items") or payload.get("webhooksubscriptions") or payload.get("subscriptions") or []
+    # NOTE: there used to be ownerrez_create_webhook_subscription() and
+    # ownerrez_list_webhook_subscriptions() here, POSTing/GETing
+    # /v2/webhooksubscriptions. Removed -- OwnerRez's docs confirm that
+    # endpoint (like all webhook management) only works for OAuth-app
+    # connections, never the username+token Basic Auth this app uses for
+    # everything else, so those calls could never have succeeded. Instead,
+    # the webhook URL/user/password is configured once, directly in
+    # OwnerRez's UI, on an OAuth App's Developer/API settings page (see the
+    # config comment above OWNERREZ_WEBHOOK_USER) -- no API call involved.
 
 
 def ownerrez_send_message(thread_id, body):
@@ -1888,13 +1956,20 @@ def login():
 
 
 def _webhook_authorized():
-    """Mirrors the shared-secret check from the original webhook receiver:
-    no secret configured means no check (open), otherwise the header or
-    query param must match exactly."""
-    if not OWNERREZ_WEBHOOK_SECRET:
+    """OwnerRez's OAuth-App webhook config sends the user/password you set
+    there using plain HTTP Basic Auth on every delivery (confirmed from
+    their docs -- this replaced an earlier X-Webhook-Secret header design
+    that never matched what OwnerRez actually sends). No user/password
+    configured here means no check (open) -- set OWNERREZ_WEBHOOK_USER /
+    OWNERREZ_WEBHOOK_PASSWORD to match what you entered in OwnerRez."""
+    if not OWNERREZ_WEBHOOK_USER or not OWNERREZ_WEBHOOK_PASSWORD:
         return True
-    supplied = request.headers.get("X-Webhook-Secret") or request.args.get("secret")
-    return supplied == OWNERREZ_WEBHOOK_SECRET
+    auth = request.authorization
+    return bool(
+        auth
+        and auth.username == OWNERREZ_WEBHOOK_USER
+        and auth.password == OWNERREZ_WEBHOOK_PASSWORD
+    )
 
 
 @app.route("/webhooks/ownerrez", methods=["GET", "POST"])
@@ -1917,15 +1992,30 @@ def ownerrez_webhook():
         payload = request.get_json(force=True, silent=True) or {}
     except Exception:
         payload = {}
+    if not isinstance(payload, dict):
+        payload = {"raw": payload}
 
     # Subscription validation handshake -- echo the token, store nothing.
     token = _extract_validation(payload) or _extract_validation(request.args.to_dict())
-    if token and not any(k in payload for k in ("entity", "resource", "data", "body")):
+    if token and "entity" not in payload:
         return Response(token, mimetype="text/plain")
 
-    event = parse_message_event(payload if isinstance(payload, dict) else {"raw": payload})
+    # This is a *global* webhook URL (see the config comment above) --
+    # OwnerRez sends every entity type and action here, not just messages.
+    # Ack anything that isn't an actual sent guest/host message so it
+    # doesn't clutter the messages inbox and OwnerRez doesn't retry it.
+    action = payload.get("action")
+    entity_type = payload.get("entity_type")
+    if action in ("webhook_test", "application_authorization_revoked") or entity_type != "thread_message":
+        return {"ok": True, "stored": False, "action": action, "entity_type": entity_type}
+
+    entity = payload.get("entity") if isinstance(payload.get("entity"), dict) else {}
+    if entity.get("is_draft"):
+        return {"ok": True, "stored": False, "reason": "draft, not yet sent"}
+
+    event = parse_message_event(payload)
     try:
-        event_id = db_add_message_event(event)
+        event_id, is_new = db_add_message_event(event)
     except Exception as e:
         # Deliberately return a non-2xx here (not swallow-and-200) --
         # OwnerRez retries failed webhook deliveries automatically, and
@@ -1933,7 +2023,7 @@ def ownerrez_webhook():
         # than a retry.
         print(f"[{datetime.datetime.now()}] Failed to store webhook message event: {e}", file=sys.stderr)
         return {"ok": False, "error": "storage failed"}, 500
-    return {"ok": True, "stored_id": event_id, "category": event.get("category")}
+    return {"ok": True, "stored": True, "stored_id": event_id, "duplicate": not is_new}
 
 
 @app.route("/logout", methods=["POST"])
@@ -1961,36 +2051,38 @@ def messages_page():
 
     ai_configured = bool(ANTHROPIC_API_KEY)
     webhook_url = f"{PUBLIC_BASE_URL.rstrip('/')}/webhooks/ownerrez" if PUBLIC_BASE_URL else ""
-
-    subs_error = None
-    subscriptions = []
-    if OWNERREZ_USERNAME and OWNERREZ_TOKEN:
-        try:
-            subscriptions = ownerrez_list_webhook_subscriptions()
-        except Exception as e:
-            subs_error = str(e)
-
-    message_subscribed = any(
-        (s.get("category") or "").lower() == "message" for s in subscriptions
-    )
+    webhook_auth_configured = bool(OWNERREZ_WEBHOOK_USER and OWNERREZ_WEBHOOK_PASSWORD)
 
     if not open_messages:
         cards_html = Markup('<p class="empty-state">No open guest messages right now.</p>')
     else:
         cards = []
         for row in open_messages:
+            guest_name = row["guest"]
+            if not guest_name and row["booking_id"]:
+                # The webhook payload never includes a guest name, only a
+                # booking_id -- resolve and cache it the first time a given
+                # message is actually displayed, rather than on every
+                # webhook delivery.
+                guest_name = fetch_booking_guest_name(row["booking_id"])
+                if guest_name:
+                    _db_safe(db_save_message_guest, row["id"], guest_name)
+
             draft = row["draft_reply"] or ""
             ai_error = None
             if not draft and ai_configured:
                 try:
-                    draft = generate_ai_draft(row)
+                    # dict(row) + override so a guest name resolved just
+                    # above (not yet visible to a fresh row-object) is used
+                    # in the very first draft too, not only on next load.
+                    draft = generate_ai_draft({**dict(row), "guest": guest_name})
                     _db_safe(db_save_message_draft, row["id"], draft)
                 except Exception as e:
                     ai_error = str(e)
 
-            cards.append(frag("message_card.html", 
+            cards.append(frag("message_card.html",
                 event_id=row["id"],
-                guest=row["guest"] or "Unknown guest",
+                guest=guest_name or (f"Booking #{row['booking_id']}" if row["booking_id"] else "Unknown guest"),
                 received=row["received_utc"] or "",
                 body=row["body"],
                 draft=draft,
@@ -1999,31 +2091,18 @@ def messages_page():
             ))
         cards_html = html_join(cards)
 
-    html = render_template("messages.html", 
+    html = render_template("messages.html",
         error_banner=Markup(f'<div class="error-banner">{h(error)}</div>') if error else "",
         cards=cards_html,
         webhook_url=webhook_url or "Set PUBLIC_BASE_URL to see your real webhook URL here.",
-        subscribed_label="Subscribed" if message_subscribed else "Not subscribed",
-        subscribed_class="status-on" if message_subscribed else "status-off",
-        subs_error_banner=(Markup(f'<div class="error-banner">{h(subs_error)}</div>') if subs_error else ""),
+        webhook_auth_label="Basic Auth configured" if webhook_auth_configured else "No Basic Auth set",
+        webhook_auth_class="status-on" if webhook_auth_configured else "status-off",
         ai_status_label="Configured" if ai_configured else "Not configured",
         ai_status_class="status-on" if ai_configured else "status-off",
         csrf_field=csrf_field(),
         sidebar=render_sidebar("/messages"),
     )
     return _no_cache(Response(html, mimetype="text/html"))
-
-
-@app.route("/messages/setup_webhook", methods=["POST"])
-def messages_setup_webhook():
-    if not PUBLIC_BASE_URL:
-        return "Set PUBLIC_BASE_URL (your real Render URL) before registering the webhook.", 400
-    url = f"{PUBLIC_BASE_URL.rstrip('/')}/webhooks/ownerrez"
-    try:
-        ownerrez_create_webhook_subscription(url, "message")
-    except Exception as e:
-        return f"Failed to register webhook subscription: {e}", 500
-    return redirect("/messages")
 
 
 @app.route("/messages/regenerate", methods=["POST"])

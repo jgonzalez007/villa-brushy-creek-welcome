@@ -64,17 +64,20 @@
 
   <div class="setup-card">
     <div class="setup-row">
-      <span class="setup-label">Webhook subscription</span>
-      <span class="status-badge {{ subscribed_class }}">{{ subscribed_label }}</span>
+      <span class="setup-label">Webhook URL (set this as your OAuth App's Webhook URL in OwnerRez)</span>
     </div>
     <div class="setup-row">
       <span class="setup-url">{{ webhook_url }}</span>
-      <form method="POST" action="/messages/setup_webhook">
-        {{ csrf_field }}
-        <button type="submit" class="setup-btn">Register webhook</button>
-      </form>
     </div>
-    {{ subs_error_banner }}
+    <div class="setup-row">
+      <span class="setup-label">Webhook Basic Auth</span>
+      <span class="status-badge {{ webhook_auth_class }}">{{ webhook_auth_label }}</span>
+    </div>
+    <p class="footer-note" style="margin-top:8px;">There's no "register" button here -- OwnerRez only delivers
+      webhooks to OAuth Apps, not this app's username+token connection. Set this URL, plus a username/password of
+      your choosing, on your OAuth App's Developer/API settings page in OwnerRez (Users tab &rarr; "Grant Access
+      To Me" for self-use), then set the same username/password here as OWNERREZ_WEBHOOK_USER /
+      OWNERREZ_WEBHOOK_PASSWORD so deliveries are verified.</p>
     <div class="setup-row">
       <span class="setup-label">AI drafting</span>
       <span class="status-badge {{ ai_status_class }}">{{ ai_status_label }}</span>
