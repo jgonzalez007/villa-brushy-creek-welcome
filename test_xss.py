@@ -37,7 +37,9 @@ def seed():
     db.execute(
         "INSERT INTO message_events (received_utc, category, action, guest, body,"
         " is_incoming, handled) VALUES (?,?,?,?,?,1,0)",
-        ("2026-09-26T00:00:00", "message", "created", f"Bobby {PAYLOAD}", f"hello {IMG}"),
+        # category must match what db_list_open_messages() filters on -- the real
+        # OwnerRez webhook payload's entity_type is "thread_message", not "message".
+        ("2026-09-26T00:00:00", "thread_message", "entity_create", f"Bobby {PAYLOAD}", f"hello {IMG}"),
     )
     db.execute(
         "INSERT INTO kwikset_access_codes (device_id, slot, booking_key, guest_name,"
