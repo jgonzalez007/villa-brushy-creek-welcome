@@ -56,7 +56,7 @@ import time
 import datetime
 from zoneinfo import ZoneInfo
 import requests
-from flask import Flask, Response, request, redirect, session, render_template
+from flask import Flask, Response, request, redirect, session, render_template, jsonify
 from markupsafe import Markup
 from werkzeug.security import generate_password_hash, check_password_hash
 
@@ -216,6 +216,26 @@ OWNERREZ_WEBHOOK_PASSWORD = os.environ.get("OWNERREZ_WEBHOOK_PASSWORD")
 # https://villa-brushy-creek-welcome.onrender.com
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")  # optional -- AI drafts
+
+# Read-only JSON API under /api/, used by OpenClaw to notice new guest
+# messages and show the host the pending draft in chat.
+#
+# This exists because OwnerRez has no endpoint that lists message threads
+# -- confirmed against their v2 API, which only serves /messages filtered
+# by a threadId you must already know. A webhook is the only way to learn
+# a message exists, this app already receives that webhook, so anything
+# else wanting to know about guest messages has to read them from here
+# rather than from OwnerRez.
+#
+# Unset -> /api/ returns 404 and the surface doesn't exist at all. Set it
+# to a long random value; it is a bearer token, equivalent to a password
+# for reading guest message text:
+#     python3 -c "import secrets; print(secrets.token_urlsafe(32))"
+#
+# Deliberately read-only: it can generate and store a draft, but it has
+# no route that messages a guest. Sending stays in the web UI behind a
+# real login, so a reply is only ever sent by a human who reviewed it.
+API_TOKEN = os.environ.get("OPENCLAW_API_TOKEN")
 
 # In-memory cache of everything the app needs to serve "/", "/manage",
 # and "/cleaning". RLock (not Lock) because route handlers call
@@ -1850,6 +1870,28 @@ def _require_login():
     if request.path == "/webhooks/ownerrez":
         return None
 
+    # The JSON API authenticates with a bearer token instead of a session
+    # cookie, so it's handled before every branch below -- otherwise an
+    # unauthenticated API call would get a 302 to /login, and a polling
+    # client would read that redirect as a successful empty response and
+    # silently report "no new messages" forever.
+    #
+    # It also sits above the bootstrap branch: /setup not being finished
+    # must not turn into a redirect here either.
+    if request.path == "/api" or request.path.startswith("/api/"):
+        if not API_TOKEN:
+            # Not configured -> the API genuinely doesn't exist. 404 rather
+            # than 401, so an unconfigured deploy doesn't look like a wrong
+            # token and send someone hunting for the right one.
+            return jsonify({"error": "API not enabled on this deployment."}), 404
+        header = request.headers.get("Authorization", "")
+        presented = header[7:] if header.lower().startswith("bearer ") else ""
+        # compare_digest, not == : a plain comparison returns faster on an
+        # early-mismatching token, which leaks the prefix a byte at a time.
+        if not presented or not secrets.compare_digest(presented, API_TOKEN):
+            return jsonify({"error": "Unauthorized."}), 401
+        return None
+
     # Static assets must be reachable while logged out, or the login and
     # setup pages -- which link the shared stylesheet -- render unstyled.
     # This sits above the bootstrap branch below because /setup needs it
@@ -2040,6 +2082,53 @@ def menu():
     return _no_cache(Response(html, mimetype="text/html"))
 
 
+def prepare_open_message(row):
+    """Resolves the guest name and makes sure a draft exists for one open
+    message event, persisting both.
+
+    Shared by /messages and the JSON API below, deliberately: the draft
+    OpenClaw shows in chat has to be the identical stored row the host
+    then sends from the web UI. If the API generated its own draft
+    instead, the host would approve one wording and send another.
+
+    Returns (guest_name, draft, ai_error). Never raises -- a failed AI
+    call is reported through ai_error so one broken draft can't take out
+    the whole page or API response."""
+    guest_name = row["guest"]
+    if not guest_name and row["booking_id"]:
+        # The webhook payload never includes a guest name, only a
+        # booking_id -- resolve and cache it the first time a given
+        # message is actually displayed, rather than on every
+        # webhook delivery.
+        guest_name = fetch_booking_guest_name(row["booking_id"])
+        if guest_name:
+            _db_safe(db_save_message_guest, row["id"], guest_name)
+
+    draft = row["draft_reply"] or ""
+    ai_error = None
+    if not draft and ANTHROPIC_API_KEY:
+        try:
+            # dict(row) + override so a guest name resolved just
+            # above (not yet visible to a fresh row-object) is used
+            # in the very first draft too, not only on next load.
+            draft = generate_ai_draft({**dict(row), "guest": guest_name})
+            _db_safe(db_save_message_draft, row["id"], draft)
+        except Exception as e:
+            ai_error = str(e)
+
+    return guest_name, draft, ai_error
+
+
+def message_display_name(row, guest_name):
+    """The label shown for a message whose guest name couldn't be resolved
+    -- OwnerRez's webhook only ever gives a booking_id."""
+    if guest_name:
+        return guest_name
+    if row["booking_id"]:
+        return f"Booking #{row['booking_id']}"
+    return "Unknown guest"
+
+
 @app.route("/messages")
 def messages_page():
     error = None
@@ -2058,31 +2147,11 @@ def messages_page():
     else:
         cards = []
         for row in open_messages:
-            guest_name = row["guest"]
-            if not guest_name and row["booking_id"]:
-                # The webhook payload never includes a guest name, only a
-                # booking_id -- resolve and cache it the first time a given
-                # message is actually displayed, rather than on every
-                # webhook delivery.
-                guest_name = fetch_booking_guest_name(row["booking_id"])
-                if guest_name:
-                    _db_safe(db_save_message_guest, row["id"], guest_name)
-
-            draft = row["draft_reply"] or ""
-            ai_error = None
-            if not draft and ai_configured:
-                try:
-                    # dict(row) + override so a guest name resolved just
-                    # above (not yet visible to a fresh row-object) is used
-                    # in the very first draft too, not only on next load.
-                    draft = generate_ai_draft({**dict(row), "guest": guest_name})
-                    _db_safe(db_save_message_draft, row["id"], draft)
-                except Exception as e:
-                    ai_error = str(e)
+            guest_name, draft, ai_error = prepare_open_message(row)
 
             cards.append(frag("message_card.html",
                 event_id=row["id"],
-                guest=guest_name or (f"Booking #{row['booking_id']}" if row["booking_id"] else "Unknown guest"),
+                guest=message_display_name(row, guest_name),
                 received=row["received_utc"] or "",
                 body=row["body"],
                 draft=draft,
@@ -2164,6 +2233,65 @@ def messages_skip():
         return "Missing event_id", 400
     db_mark_message_handled(int(event_id), handled=True, sent=False)
     return redirect("/messages")
+
+
+# ---------------------------------------------------------------------------
+# READ-ONLY JSON API (OpenClaw)
+#
+# Authenticated by the bearer token checked in _require_login above, not by
+# a session cookie. There is intentionally no send endpoint here: OpenClaw
+# surfaces the draft for review, and the host sends it from /messages.
+# ---------------------------------------------------------------------------
+@app.route("/api/messages/open")
+def api_messages_open():
+    """Open (unhandled) guest messages, each with its stored draft reply.
+
+    Returns the same rows /messages shows, prepared the same way, so the
+    draft quoted in chat is the one already saved against the event -- the
+    host reviews and sends that exact text, not a regenerated variant.
+
+    Generating a missing draft calls Anthropic, so a poller should run on
+    the order of minutes, not seconds."""
+    try:
+        rows = db_list_open_messages()
+    except Exception as e:
+        # 503, not 500: the store being unreadable is a transient
+        # dependency failure, and a poller should retry rather than treat
+        # it as a permanent bug.
+        return jsonify({"error": f"Couldn't read the message store: {e}"}), 503
+
+    messages = []
+    for row in rows:
+        guest_name, draft, ai_error = prepare_open_message(row)
+        messages.append({
+            "event_id": row["id"],
+            "guest": message_display_name(row, guest_name),
+            # Strings, not ints: message_events declares both columns TEXT,
+            # so SQLite's TEXT affinity stores even a numeric id as "9911".
+            # Passed through as stored rather than coerced -- these are
+            # informational here (replies are sent from the web UI), and
+            # int()-ing a value that has never been guaranteed numeric
+            # would turn a surprising id into a 500 on every poll.
+            "booking_id": row["booking_id"],
+            "thread_id": row["thread_id"],
+            "received_utc": row["received_utc"],
+            "body": row["body"],
+            "draft_reply": draft or None,
+            # Non-null means this row has no draft and why -- so the chat
+            # notification can say "drafting failed" instead of implying
+            # the guest wrote nothing.
+            "draft_error": ai_error,
+            # Deep link to the card the host sends from. Relative when
+            # PUBLIC_BASE_URL isn't set, rather than a broken absolute URL.
+            "url": f"{PUBLIC_BASE_URL.rstrip('/')}/messages#msg-{row['id']}"
+                   if PUBLIC_BASE_URL else f"/messages#msg-{row['id']}",
+        })
+
+    return jsonify({
+        "count": len(messages),
+        "ai_configured": bool(ANTHROPIC_API_KEY),
+        "messages": messages,
+    })
 
 
 @app.route("/users")
