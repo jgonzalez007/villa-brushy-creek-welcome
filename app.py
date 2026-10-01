@@ -2129,6 +2129,17 @@ def message_display_name(row, guest_name):
     return "Unknown guest"
 
 
+def message_card_url(event_id):
+    """Deep link to the /messages card for one event. Relative when
+    PUBLIC_BASE_URL isn't set, rather than a broken absolute URL.
+
+    Shared by both API routes so the link a caller reads from the GET is
+    identical to the one the draft POST hands back."""
+    if PUBLIC_BASE_URL:
+        return f"{PUBLIC_BASE_URL.rstrip('/')}/messages#msg-{event_id}"
+    return f"/messages#msg-{event_id}"
+
+
 @app.route("/messages")
 def messages_page():
     error = None
@@ -2281,16 +2292,96 @@ def api_messages_open():
             # notification can say "drafting failed" instead of implying
             # the guest wrote nothing.
             "draft_error": ai_error,
-            # Deep link to the card the host sends from. Relative when
-            # PUBLIC_BASE_URL isn't set, rather than a broken absolute URL.
-            "url": f"{PUBLIC_BASE_URL.rstrip('/')}/messages#msg-{row['id']}"
-                   if PUBLIC_BASE_URL else f"/messages#msg-{row['id']}",
+            # Deep link to the card the host sends from.
+            "url": message_card_url(row["id"]),
         })
 
     return jsonify({
         "count": len(messages),
         "ai_configured": bool(ANTHROPIC_API_KEY),
         "messages": messages,
+    })
+
+
+# Longest draft accepted from the API. Guest replies are a few sentences; a
+# value far past that means a confused caller (or a model that ran away), and
+# the host would have to scroll a wall of text in the send form to notice.
+MAX_PUSHED_DRAFT_CHARS = 4000
+
+
+@app.route("/api/messages/<int:event_id>/draft", methods=["POST"])
+def api_messages_push_draft(event_id):
+    """Store a draft reply generated elsewhere (OpenClaw) against one event.
+
+    This exists so the drafting model can live outside this app: the host
+    never has to put an ANTHROPIC_API_KEY on the deploy, and whatever wrote
+    the draft has already been reviewed in chat.
+
+    Saving only. The host still reviews the text at /messages and sends it
+    from there -- posting here never contacts OwnerRez and never marks the
+    message handled. The <int:...> converter means a non-numeric id is a
+    routing 404 rather than an int() crash.
+    """
+    # silent=True: a malformed or absent body is this function's 400 to
+    # report, not a Flask HTML 400 that a JSON client has to guess at.
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Expected a JSON object body."}), 400
+
+    if "draft_reply" not in payload:
+        # Named to match the GET's field, so a caller can read draft_reply
+        # and write it back under the same key.
+        return jsonify({"error": "Missing 'draft_reply'."}), 400
+
+    draft = payload["draft_reply"]
+    if not isinstance(draft, str):
+        return jsonify({"error": "'draft_reply' must be a string."}), 400
+    draft = draft.strip()
+    if not draft:
+        # Rejected rather than treated as "clear the draft": a blank push is
+        # almost always a failed generation upstream, and silently wiping a
+        # draft the host was about to send is the worst way to find out.
+        return jsonify({"error": "'draft_reply' can't be empty."}), 400
+    if len(draft) > MAX_PUSHED_DRAFT_CHARS:
+        return jsonify({
+            "error": f"'draft_reply' is {len(draft)} characters; "
+                     f"the limit is {MAX_PUSHED_DRAFT_CHARS}.",
+        }), 400
+
+    try:
+        row = db_get_message_event(event_id)
+    except Exception as e:
+        # 503 to match the GET: an unreadable store is a transient
+        # dependency failure, so a pusher should retry.
+        return jsonify({"error": f"Couldn't read the message store: {e}"}), 503
+
+    if row is None:
+        return jsonify({"error": "No message event with that id."}), 404
+
+    if row["handled"]:
+        # 409, not 200: the host has already dealt with this one, so the
+        # draft would sit against a card nobody will look at again. Telling
+        # the caller lets it drop the message instead of retrying forever.
+        return jsonify({
+            "error": "That message is already handled; refusing to overwrite "
+                     "its draft.",
+        }), 409
+
+    try:
+        # Deliberately NOT _db_safe: that helper logs and returns, which
+        # would let this route answer 200 after failing to save anything.
+        # A write API has to surface a failed write.
+        db_save_message_draft(event_id, draft)
+    except Exception as e:
+        return jsonify({"error": f"Couldn't save the draft: {e}"}), 503
+
+    return jsonify({
+        "ok": True,
+        "event_id": event_id,
+        # Echoed back stripped, so the caller can confirm what was stored
+        # rather than assuming its own text round-tripped unchanged.
+        "draft_reply": draft,
+        "url": message_card_url(event_id),
     })
 
 
