@@ -107,6 +107,23 @@ def main():
     check("wrong token -> 401",
           c.get("/api/messages/open",
                 headers={"Authorization": "Bearer wrong"}).status_code == 401)
+    # Regression: a non-ASCII token used to be a 500, not a 401.
+    # secrets.compare_digest raises TypeError on str operands containing
+    # non-ASCII characters, so the header -- which an unauthenticated
+    # caller fully controls -- crashed the before_request hook and got
+    # Werkzeug's stock HTML error page instead of the JSON 401 body. Both
+    # a latin-1 char and a wider codepoint, since they reach the decoder
+    # differently. The body is asserted too: a 401 that isn't the usual
+    # JSON would still break a polling client.
+    for _label, _bad in (("latin-1", "Bearer tokén"),
+                         ("beyond latin-1", "Bearer tok…en")):
+        _r = c.get("/api/messages/open", headers={"Authorization": _bad})
+        check(f"non-ASCII token ({_label}) -> 401 not 500",
+              _r.status_code == 401, f"got {_r.status_code}")
+        check(f"non-ASCII token ({_label}) -> JSON error body",
+              _r.status_code == 401
+              and json.loads(_r.get_data(as_text=True)) == {"error": "Unauthorized."},
+              _r.get_data(as_text=True)[:80])
     check("token as query param -> 401 (header only)",
           c.get(f"/api/messages/open?token={TOKEN}").status_code == 401)
     r = c.get("/api/messages/open", headers={"Authorization": f"Bearer {TOKEN}"})

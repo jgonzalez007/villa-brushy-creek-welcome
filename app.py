@@ -1878,6 +1878,43 @@ def render_sidebar(active_path):
 _PUBLIC_PATHS = {"/login", "/setup", "/webhooks/ownerrez"}
 
 
+def _bearer_token_matches(header, expected):
+    """True only if `header` carries exactly the `expected` bearer token.
+
+    Every malformed header -- wrong scheme, no token, non-ASCII bytes --
+    is just a mismatch here, never an exception. That matters because the
+    header is attacker-controlled: secrets.compare_digest refuses str
+    operands containing non-ASCII characters and raises
+
+        TypeError: comparing strings with non-ASCII characters is not
+        supported
+
+    so comparing the header as str turned `Authorization: Bearer tokén`
+    into a 500 (Werkzeug's stock HTML error page, no JSON body) instead
+    of the 401 every other bad token gets.
+
+    Fixed by comparing bytes instead of str, which compare_digest accepts
+    unconditionally and still compares in constant time. Both sides are
+    encoded with surrogateescape: os.environ decodes the environment that
+    way, so this round-trips whatever raw bytes the operator actually set
+    in OPENCLAW_API_TOKEN rather than rejecting a token it can't decode.
+    """
+    if not header.lower().startswith("bearer "):
+        return False
+    presented = header[7:]
+    if not presented:
+        return False
+    try:
+        presented_bytes = presented.encode("utf-8", "surrogateescape")
+        expected_bytes = expected.encode("utf-8", "surrogateescape")
+    except (UnicodeError, AttributeError):
+        # Nothing reachable over HTTP should land here -- a WSGI server
+        # decodes headers as latin-1, which cannot produce an unpaired
+        # surrogate. Belt and braces so no header shape can ever be a 500.
+        return False
+    return secrets.compare_digest(presented_bytes, expected_bytes)
+
+
 @app.before_request
 def _require_login():
     # The webhook receiver must always be reachable -- OwnerRez can and will
@@ -1901,11 +1938,12 @@ def _require_login():
             # than 401, so an unconfigured deploy doesn't look like a wrong
             # token and send someone hunting for the right one.
             return jsonify({"error": "API not enabled on this deployment."}), 404
+        # The helper compares with compare_digest, not == : a plain
+        # comparison returns faster on an early-mismatching token, which
+        # leaks the prefix a byte at a time. See _bearer_token_matches for
+        # why the comparison is done on bytes.
         header = request.headers.get("Authorization", "")
-        presented = header[7:] if header.lower().startswith("bearer ") else ""
-        # compare_digest, not == : a plain comparison returns faster on an
-        # early-mismatching token, which leaks the prefix a byte at a time.
-        if not presented or not secrets.compare_digest(presented, API_TOKEN):
+        if not _bearer_token_matches(header, API_TOKEN):
             return jsonify({"error": "Unauthorized."}), 401
         return None
 
