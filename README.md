@@ -253,12 +253,19 @@ like wifi passwords or door codes, and to leave a bracketed placeholder
 like `[confirm wifi password]` instead, for you to fill in before
 sending.
 
-### Reading pending messages from OpenClaw (`/api/messages/open`)
+### Working with pending messages from OpenClaw (`/api/messages/...`)
 
-Set `OPENCLAW_API_TOKEN` to expose one read-only JSON endpoint so an
-assistant (OpenClaw, or anything else that can send an HTTP header) can
-notice new guest messages and show you the pending draft, without you
-having to keep `/messages` open in a tab.
+Set `OPENCLAW_API_TOKEN` to expose two JSON endpoints so an assistant
+(OpenClaw, or anything else that can send an HTTP header) can notice new
+guest messages and show you the pending draft, without you having to keep
+`/messages` open in a tab:
+
+| Route | Does |
+| --- | --- |
+| `GET /api/messages/open` | Lists unhandled guest messages with their stored drafts |
+| `POST /api/messages/<event_id>/draft` | Stores a draft reply against one message |
+
+Neither one can send -- see "Things worth knowing" below.
 
 ```bash
 curl -H "Authorization: Bearer $OPENCLAW_API_TOKEN" \
@@ -288,14 +295,51 @@ curl -H "Authorization: Bearer $OPENCLAW_API_TOKEN" \
 Generate the token with
 `python3 -c "import secrets; print(secrets.token_urlsafe(32))"` and set it
 in Render's Environment tab. **Leave it unset and `/api` does not exist at
-all** (404) -- the endpoint is opt-in, not on by default.
+all** (404) -- the endpoints are opt-in, not on by default.
+
+#### Pushing a draft in (`POST /api/messages/<event_id>/draft`)
+
+Lets the drafting model live outside this app, so you never have to put an
+`ANTHROPIC_API_KEY` on the deploy. Whatever wrote the reply (and had it
+reviewed in chat) stores it here; you then review and send it from
+`/messages` exactly as if the app had drafted it.
+
+```bash
+curl -X POST \
+  -H "Authorization: Bearer $OPENCLAW_API_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{"draft_reply": "Hi Jane -- check-in is from 4pm."}' \
+  https://villa-brushy-creek-welcome.onrender.com/api/messages/12/draft
+```
+
+```json
+{
+  "ok": true,
+  "event_id": 12,
+  "draft_reply": "Hi Jane -- check-in is from 4pm.",
+  "url": "https://villa-brushy-creek-welcome.onrender.com/messages#msg-12"
+}
+```
+
+The field is named `draft_reply` to match what the `GET` hands back, so a
+caller can read and write the same key. What it refuses, and why:
+
+| Response | When |
+| --- | --- |
+| `400` | Empty or whitespace-only draft. Deliberately *not* read as "clear the draft" -- a blank push almost always means generation failed upstream, and silently wiping a draft you were about to send is the worst way to find that out. |
+| `400` | Missing `draft_reply`, a non-string value, a body that isn't a JSON object, or a draft over 4000 characters. |
+| `404` | No message event with that id (a non-numeric id included). |
+| `409` | That message is already handled -- the draft would land on a card you're done with. A poller gets a clear answer instead of retrying forever. |
+| `503` | The message store couldn't be read or written. A failed save is never reported as success. |
 
 Things worth knowing about this surface:
 
-- **It cannot send anything.** There is deliberately no send route under
-  `/api`. The endpoint returns the draft; replying stays on `/messages`
-  behind a real login, so a guest only ever receives text a human
-  reviewed and sent. `test_api.py` asserts no send route exists.
+- **Neither endpoint can send anything.** There is deliberately no send
+  route under `/api`: the `GET` returns a draft and the `POST` stores one,
+  but actually replying stays on `/messages` behind a real login, so a
+  guest only ever receives text a human reviewed and sent. Pushing a draft
+  does not mark the message handled either. `test_api.py` asserts no send
+  route exists.
 - **The draft it returns is the stored draft** -- the same row
   `/messages` will send, not a freshly generated variant. Otherwise you
   could approve one wording in chat and send another from the browser.
