@@ -2264,11 +2264,13 @@ def messages_skip():
 
 
 # ---------------------------------------------------------------------------
-# READ-ONLY JSON API (OpenClaw)
+# JSON API (OpenClaw)
 #
 # Authenticated by the bearer token checked in _require_login above, not by
-# a session cookie. There is intentionally no send endpoint here: OpenClaw
-# surfaces the draft for review, and the host sends it from /messages.
+# a session cookie. Reads open messages and accepts a pushed draft; there is
+# intentionally no send endpoint here, and a pushed draft does not mark a
+# message handled. OpenClaw surfaces the draft for review, and the host
+# sends it from /messages.
 # ---------------------------------------------------------------------------
 @app.route("/api/messages/open")
 def api_messages_open():

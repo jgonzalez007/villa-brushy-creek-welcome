@@ -65,7 +65,7 @@ services:
       - key: ANTHROPIC_API_KEY
         sync: false        # optional -- omit to leave /messages showing "AI drafting: Not configured" (manual replies still work)
       - key: OPENCLAW_API_TOKEN
-        sync: false        # optional -- bearer token for the read-only /api/messages/open endpoint OpenClaw polls. Omit to disable /api entirely (it 404s). Generate with: python3 -c "import secrets; print(secrets.token_urlsafe(32))"
+        sync: false        # optional -- bearer token for the /api/messages endpoints OpenClaw uses: GET /api/messages/open to poll, POST /api/messages/<id>/draft to store a draft. Neither can send a reply. Omit to disable /api entirely (it 404s). Generate with: python3 -c "import secrets; print(secrets.token_urlsafe(32))"
     # SINGULAR "disk:", and a mapping rather than a list. A service gets
     # exactly one disk, so "disks:" with a "- " item is not valid and fails
     # the blueprint with:
