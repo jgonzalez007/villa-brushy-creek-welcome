@@ -253,6 +253,69 @@ like wifi passwords or door codes, and to leave a bracketed placeholder
 like `[confirm wifi password]` instead, for you to fill in before
 sending.
 
+### Reading pending messages from OpenClaw (`/api/messages/open`)
+
+Set `OPENCLAW_API_TOKEN` to expose one read-only JSON endpoint so an
+assistant (OpenClaw, or anything else that can send an HTTP header) can
+notice new guest messages and show you the pending draft, without you
+having to keep `/messages` open in a tab.
+
+```bash
+curl -H "Authorization: Bearer $OPENCLAW_API_TOKEN" \
+  https://villa-brushy-creek-welcome.onrender.com/api/messages/open
+```
+
+```json
+{
+  "count": 1,
+  "ai_configured": true,
+  "messages": [
+    {
+      "event_id": 12,
+      "guest": "Jane Doe",
+      "booking_id": "4242",
+      "thread_id": "9911",
+      "received_utc": "2026-10-01T14:02:11",
+      "body": "What time can we check in?",
+      "draft_reply": "Hi Jane -- check-in is from [confirm time] ...",
+      "draft_error": null,
+      "url": "https://villa-brushy-creek-welcome.onrender.com/messages#msg-12"
+    }
+  ]
+}
+```
+
+Generate the token with
+`python3 -c "import secrets; print(secrets.token_urlsafe(32))"` and set it
+in Render's Environment tab. **Leave it unset and `/api` does not exist at
+all** (404) -- the endpoint is opt-in, not on by default.
+
+Things worth knowing about this surface:
+
+- **It cannot send anything.** There is deliberately no send route under
+  `/api`. The endpoint returns the draft; replying stays on `/messages`
+  behind a real login, so a guest only ever receives text a human
+  reviewed and sent. `test_api.py` asserts no send route exists.
+- **The draft it returns is the stored draft** -- the same row
+  `/messages` will send, not a freshly generated variant. Otherwise you
+  could approve one wording in chat and send another from the browser.
+  `/messages` and this endpoint share one `prepare_open_message()` helper
+  to guarantee that.
+- **It authenticates by bearer token only**, never by session cookie, and
+  returns 401 (not a redirect to `/login`) when the token is wrong or
+  missing. That matters: a poller follows a 302, finds no messages in the
+  login page, and would otherwise report "nothing new" forever.
+- **The token is a password for guest message text.** Anyone holding it
+  can read guest names and message bodies. Rotate it by changing the
+  Render variable.
+- **Poll on the order of minutes.** A message with no draft yet triggers
+  an Anthropic call when fetched, exactly as loading `/messages` does.
+- `thread_id` and `booking_id` come back as **strings**, because
+  `message_events` declares those columns `TEXT`.
+
+Run `python test_api.py` to check all of the above (auth matrix, the
+shared-draft guarantee, the absence of a send route).
+
 ### How this was built
 
 The webhook receiver, message storage, and the underlying
