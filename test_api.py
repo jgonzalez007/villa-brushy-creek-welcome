@@ -217,6 +217,61 @@ def main():
         got = c.post(path, headers={"Authorization": f"Bearer {TOKEN}"}).status_code
         check(f"POST {path} -> 404/405", got in (404, 405), f"got {got}")
 
+    # The draft generator's failure path. Stubbed, never a real API call:
+    # the point is that whatever Anthropic says reaches the host instead of
+    # being reduced to "400 Client Error: Bad Request".
+    print("\nAnthropic failures reach the host:")
+
+    class _FakeResp:
+        def __init__(self, status, payload=None, text=""):
+            self.status_code = status
+            self.ok = 200 <= status < 300
+            self.reason = "Bad Request" if status == 400 else "OK"
+            self._payload = payload or {}
+            self.text = text
+            self.request = type("R", (), {"method": "POST",
+                                          "url": "https://api.anthropic.com/v1/messages"})()
+
+        def json(self):
+            return self._payload
+
+    real_post, real_key = appmod.requests.post, appmod.ANTHROPIC_API_KEY
+    appmod.ANTHROPIC_API_KEY = "sk-ant-not-a-real-key"
+    event = {"guest": "Bobby Tables", "body": "What time is checkin?",
+             "booking_id": None}
+    try:
+        credit_msg = ('{"type":"error","error":{"type":"invalid_request_error",'
+                      '"message":"Your credit balance is too low"}}')
+        appmod.requests.post = lambda *a, **k: _FakeResp(400, text=credit_msg)
+        try:
+            appmod.generate_ai_draft(event)
+            check("400 body surfaced in the error", False, "no exception raised")
+        except Exception as e:
+            check("400 body surfaced in the error", "credit balance is too low" in str(e),
+                  f"got {str(e)[:120]!r}")
+            check("status and URL still reported", "400" in str(e)
+                  and "api.anthropic.com" in str(e), f"got {str(e)[:120]!r}")
+
+        # A 200 carrying no text block must not be stored as an empty draft.
+        appmod.requests.post = lambda *a, **k: _FakeResp(
+            200, payload={"stop_reason": "refusal", "content": []})
+        try:
+            appmod.generate_ai_draft(event)
+            check("empty 200 raises instead of saving a blank draft", False,
+                  "no exception raised")
+        except Exception as e:
+            check("empty 200 raises instead of saving a blank draft",
+                  "refusal" in str(e), f"got {str(e)[:120]!r}")
+
+        # The happy path still returns joined text.
+        appmod.requests.post = lambda *a, **k: _FakeResp(
+            200, payload={"stop_reason": "end_turn",
+                          "content": [{"type": "text", "text": "  Hi Bobby!  "}]})
+        check("success returns the stripped text",
+              appmod.generate_ai_draft(event) == "Hi Bobby!")
+    finally:
+        appmod.requests.post, appmod.ANTHROPIC_API_KEY = real_post, real_key
+
     print("\nwith OPENCLAW_API_TOKEN unset:")
     appmod.API_TOKEN = None
     r = c.get("/api/messages/open", headers={"Authorization": f"Bearer {TOKEN}"})

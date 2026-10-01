@@ -1162,9 +1162,26 @@ def generate_ai_draft(event):
         },
         timeout=30,
     )
-    resp.raise_for_status()
+    # _raise_with_body, not resp.raise_for_status(): Anthropic puts the
+    # actual reason for a 4xx in the response body, and bare
+    # raise_for_status() throws it away -- leaving the host staring at
+    # "400 Client Error: Bad Request" on /messages with no way to tell a
+    # billing problem from a bad model id from a malformed request.
+    # prepare_open_message() puts str(e) straight into ai_error, so this
+    # body reaches both the page and the API's draft_error field.
+    _raise_with_body(resp)
     data = resp.json()
     text_parts = [b.get("text", "") for b in data.get("content", []) if b.get("type") == "text"]
+    if not text_parts:
+        # A 200 with no text block means the turn ended without prose --
+        # most often stop_reason "refusal", or max_tokens hit before any
+        # text. Returning "" here would be saved as the draft and look
+        # like the model wrote nothing, so report it as a draft error
+        # with the reason attached.
+        raise RuntimeError(
+            "Anthropic returned no text content "
+            f"(stop_reason: {data.get('stop_reason')!r})."
+        )
     return "".join(text_parts).strip()
 
 
