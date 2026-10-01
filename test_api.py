@@ -1,8 +1,8 @@
-"""Tests for the read-only /api/messages/open endpoint used by OpenClaw.
+"""Tests for the /api/messages endpoints used by OpenClaw.
 
     python test_api.py
 
-Covers the three things most likely to break quietly:
+Covers the things most likely to break quietly:
 
   1. Auth. A wrong or missing token must be a 401, never a 302 to /login --
      a polling client follows the redirect, gets the login page, finds no
@@ -11,6 +11,9 @@ Covers the three things most likely to break quietly:
      before /setup has been completed.
   3. The shared draft. The API must return the draft stored against the
      event -- the same text /messages will send -- not a fresh one.
+  4. Pushing a draft. POST .../draft must store text the host will send,
+     reject input that would silently destroy a draft (empty) or land on a
+     message already dealt with (handled), and never send anything itself.
 """
 import json
 import os
@@ -137,6 +140,77 @@ def main():
               data["ai_configured"] is False)
         check("no draft_error on a pre-stored draft",
               m["draft_error"] is None, f"got {m['draft_error']!r}")
+
+    print("\npush a draft (POST /api/messages/<id>/draft):")
+    auth = {"Authorization": f"Bearer {TOKEN}"}
+    draft_path = "/api/messages/1/draft"
+    PUSHED = "Hi Bobby -- check-in is 4pm. See you then!"
+
+    check("no header -> 401",
+          c.post(draft_path, json={"draft_reply": PUSHED}).status_code == 401)
+    check("wrong token -> 401",
+          c.post(draft_path, json={"draft_reply": PUSHED},
+                 headers={"Authorization": "Bearer wrong"}).status_code == 401)
+    # No csrf_token is ever sent below. The /api branch of _require_login must
+    # return before the form-CSRF check, or every push is a 400.
+    check("bearer POST is exempt from form CSRF",
+          c.post(draft_path, json={"draft_reply": PUSHED},
+                 headers=auth).status_code == 200)
+
+    # Round trip: the GET must now hand back exactly what was pushed. This is
+    # the whole point of the endpoint -- the text approved in chat is the text
+    # the host sends.
+    after = json.loads(c.get("/api/messages/open", headers=auth).get_data(as_text=True))
+    check("pushed draft comes back from the GET",
+          after["messages"][0]["draft_reply"] == PUSHED,
+          f"got {after['messages'][0]['draft_reply']!r}")
+    check("push did not mark the message handled", after["count"] == 1,
+          f"count={after['count']}")
+
+    print("\n  rejected input must not touch the stored draft:")
+    for name, body in (
+        ("empty string -> 400", {"draft_reply": ""}),
+        ("whitespace only -> 400", {"draft_reply": "   \n  "}),
+        ("missing key -> 400", {"other": "x"}),
+        ("non-string -> 400", {"draft_reply": 42}),
+        ("null -> 400", {"draft_reply": None}),
+        ("over the length cap -> 400",
+         {"draft_reply": "x" * (appmod.MAX_PUSHED_DRAFT_CHARS + 1)}),
+    ):
+        got = c.post(draft_path, json=body, headers=auth).status_code
+        check(f"  {name}", got == 400, f"got {got}")
+    got = c.post(draft_path, data="not json at all", headers=auth).status_code
+    check("  non-JSON body -> 400", got == 400, f"got {got}")
+    # The draft the host was about to send must have survived all of that.
+    still = json.loads(c.get("/api/messages/open", headers=auth).get_data(as_text=True))
+    check("draft survived every rejected push",
+          still["messages"][0]["draft_reply"] == PUSHED,
+          f"got {still['messages'][0]['draft_reply']!r}")
+
+    print("\n  wrong target:")
+    got = c.post("/api/messages/9999/draft", json={"draft_reply": PUSHED},
+                 headers=auth).status_code
+    check("  unknown event id -> 404", got == 404, f"got {got}")
+    got = c.post("/api/messages/abc/draft", json={"draft_reply": PUSHED},
+                 headers=auth).status_code
+    check("  non-numeric id -> 404 (int converter, not a 500)",
+          got == 404, f"got {got}")
+    # Event 2 is the seeded handled row. Pushing there would park a draft on a
+    # card the host has already finished with.
+    r409 = c.post("/api/messages/2/draft", json={"draft_reply": PUSHED}, headers=auth)
+    check("  already-handled event -> 409", r409.status_code == 409,
+          f"got {r409.status_code}")
+
+    print("\n  response shape:")
+    r_ok = c.post(draft_path, json={"draft_reply": f"  {PUSHED}  "}, headers=auth)
+    body = json.loads(r_ok.get_data(as_text=True))
+    check("  ok: true", body.get("ok") is True)
+    check("  event_id echoed", body.get("event_id") == 1)
+    check("  draft echoed back stripped", body.get("draft_reply") == PUSHED,
+          f"got {body.get('draft_reply')!r}")
+    check("  url matches the GET's deep link",
+          body.get("url") == "https://example.invalid/messages#msg-1",
+          f"got {body.get('url')!r}")
 
     print("\nno send route is exposed under /api:")
     for path in ("/api/messages/send", "/api/messages/1/send"):
