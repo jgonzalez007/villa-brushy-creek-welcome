@@ -61,6 +61,7 @@ from markupsafe import Markup
 from werkzeug.security import generate_password_hash, check_password_hash
 
 import kwikset_client
+from kwikset_codec import check_code_rules
 
 
 
@@ -182,11 +183,8 @@ POOL_SCHEDULE_CHECK_SECONDS = 30  # how often the scheduler loop checks for due 
 # point on (token refresh, REST calls) is handled by this app.
 KWIKSET_EMAIL = os.environ.get("KWIKSET_EMAIL")
 KWIKSET_REFRESH_TOKEN = os.environ.get("KWIKSET_REFRESH_TOKEN")
-# Slots below this are left alone -- low slot numbers are the ones most
-# likely to already be occupied by codes set manually through the
-# Kwikset app or keypad (which this app can't see -- see the /doors
-# README section on why "sent" tracking is local-only).
-KWIKSET_START_SLOT = int(os.environ.get("KWIKSET_START_SLOT", "5"))
+# No slot setting: the lock picks a free slot for every new code and
+# reports it back (see kwikset_client.add_access_code).
 
 # Auth. SECRET_KEY signs the session cookie -- without setting this env
 # var, a random key is generated at every process start, which means
@@ -314,14 +312,15 @@ def init_db():
             updated_at TEXT
         );
         CREATE TABLE IF NOT EXISTS kwikset_access_codes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
             device_id TEXT NOT NULL,
-            slot INTEGER NOT NULL,
+            slot INTEGER,
+            slot_confirmed INTEGER NOT NULL DEFAULT 0,
             booking_key TEXT,
             guest_name TEXT,
             code TEXT,
             schedule_json TEXT,
-            created_at TEXT,
-            PRIMARY KEY (device_id, slot)
+            created_at TEXT
         );
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -362,6 +361,41 @@ def init_db():
     db.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_msg_webhook_event_id "
         "ON message_events (webhook_event_id) WHERE webhook_event_id IS NOT NULL"
+    )
+    db.commit()
+
+    # Migration: kwikset_access_codes used to be keyed on (device_id, slot)
+    # with slots this app guessed itself (MAX(slot)+1 from
+    # KWIKSET_START_SLOT). The lock actually picks the slot, so those
+    # guessed numbers may point at someone else's code -- a delete sent to
+    # one erases whatever lives there. Rebuild the table so a slot can be
+    # unknown, and carry every existing row over as unconfirmed, which
+    # blocks removing it from /doors. Only lock-reported slots are confirmed.
+    code_cols = {row["name"] for row in db.execute("PRAGMA table_info(kwikset_access_codes)")}
+    if "slot_confirmed" not in code_cols:
+        db.executescript("""
+            ALTER TABLE kwikset_access_codes RENAME TO kwikset_access_codes_guessed;
+            CREATE TABLE kwikset_access_codes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                device_id TEXT NOT NULL,
+                slot INTEGER,
+                slot_confirmed INTEGER NOT NULL DEFAULT 0,
+                booking_key TEXT,
+                guest_name TEXT,
+                code TEXT,
+                schedule_json TEXT,
+                created_at TEXT
+            );
+            INSERT INTO kwikset_access_codes
+                (device_id, slot, slot_confirmed, booking_key, guest_name, code, schedule_json, created_at)
+                SELECT device_id, slot, 0, booking_key, guest_name, code, schedule_json, created_at
+                FROM kwikset_access_codes_guessed;
+            DROP TABLE kwikset_access_codes_guessed;
+        """)
+        db.commit()
+    db.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_access_code_confirmed_slot "
+        "ON kwikset_access_codes (device_id, slot) WHERE slot_confirmed = 1"
     )
     db.commit()
 
@@ -502,29 +536,38 @@ def db_save_kwikset_auth(email, refresh_token):
 
 
 def db_record_access_code(device_id, slot, booking_key, guest_name, code, schedule):
+    """`slot` is the slot the lock reported, or None if it didn't report
+    one. A newly reported slot that we already have confirmed means that
+    earlier code was deleted outside this app (the lock only reuses free
+    slots), so the stale row is replaced."""
     db = get_db()
+    confirmed = slot is not None
+    if confirmed:
+        db.execute(
+            "DELETE FROM kwikset_access_codes WHERE device_id = ? AND slot = ? AND slot_confirmed = 1",
+            (device_id, slot),
+        )
     db.execute(
         """INSERT INTO kwikset_access_codes
-           (device_id, slot, booking_key, guest_name, code, schedule_json, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(device_id, slot) DO UPDATE SET
-             booking_key=excluded.booking_key, guest_name=excluded.guest_name,
-             code=excluded.code, schedule_json=excluded.schedule_json,
-             created_at=excluded.created_at""",
-        (device_id, slot, booking_key, guest_name, code, json.dumps(schedule), datetime.datetime.now().isoformat()),
+           (device_id, slot, slot_confirmed, booking_key, guest_name, code, schedule_json, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (device_id, slot, int(confirmed), booking_key, guest_name, code, json.dumps(schedule),
+         datetime.datetime.now().isoformat()),
     )
     db.commit()
 
 
-def db_next_access_code_slot(device_id):
-    """Returns the next free slot for this device, starting from
-    KWIKSET_START_SLOT (not 1) -- see its definition for why."""
+def db_known_codes_for_device(device_id):
+    """Every code this app has sent to the lock and still has on record.
+    Expired date-range codes are included -- they stay stored on the lock
+    until someone deletes them, so they still count for Kwikset's
+    uniqueness rules."""
     db = get_db()
-    row = db.execute(
-        "SELECT COALESCE(MAX(slot), ?) + 1 AS next_slot FROM kwikset_access_codes WHERE device_id = ?",
-        (KWIKSET_START_SLOT - 1, device_id),
-    ).fetchone()
-    return row["next_slot"]
+    return [
+        row["code"] for row in db.execute(
+            "SELECT code FROM kwikset_access_codes WHERE device_id = ?", (device_id,)
+        )
+    ]
 
 
 def db_find_access_code_for_booking(device_id, booking_key):
@@ -542,12 +585,14 @@ def db_list_all_access_codes():
     ).fetchall()
 
 
-def db_delete_access_code_record(device_id, slot):
+def db_find_access_code(code_id):
     db = get_db()
-    db.execute(
-        "DELETE FROM kwikset_access_codes WHERE device_id = ? AND slot = ?",
-        (device_id, slot),
-    )
+    return db.execute("SELECT * FROM kwikset_access_codes WHERE id = ?", (code_id,)).fetchone()
+
+
+def db_delete_access_code_record(code_id):
+    db = get_db()
+    db.execute("DELETE FROM kwikset_access_codes WHERE id = ?", (code_id,))
     db.commit()
 
 
@@ -1755,17 +1800,25 @@ def send_door_code_for_guest(device_id, guest, check_in_time=None, check_out_tim
             f"{guest['last_name']} -- can't derive a 4-digit code."
         )
 
-    client = get_kwikset_client()
-    slot = db_next_access_code_slot(device_id)
     schedule = build_stay_schedule(guest, check_in_time, check_out_time)
     guest_full_name = f"{guest['first_name']} {guest['last_name']}".strip()
+    return add_door_code(device_id, guest_full_name, code, schedule, booking_key=guest["booking_key"])
 
-    result = client.add_access_code(
-        device_id=device_id, name=guest_full_name, code=code, slot=slot, schedule=schedule,
-    )
-    _db_safe(
-        db_record_access_code, device_id, slot, guest["booking_key"], guest_full_name, code, schedule,
-    )
+
+def add_door_code(device_id, name, code, schedule, booking_key=None):
+    """Creates a code on the lock and records it with whatever slot the
+    lock reported. Checks Kwikset's uniqueness rules first -- only
+    against codes this app knows about, since Kwikset can't list a lock's
+    codes. Raises on any failure."""
+    rule_error = check_code_rules(code, db_known_codes_for_device(device_id))
+    if rule_error:
+        raise RuntimeError(
+            f"{rule_error} Remove the old code first (in the list below, or in "
+            "the Kwikset app if it was set there)."
+        )
+    client = get_kwikset_client()
+    result = client.add_access_code(device_id=device_id, name=name, code=code, schedule=schedule)
+    _db_safe(db_record_access_code, device_id, result["slot"], booking_key, result["name"], code, schedule)
     return result
 
 
@@ -2958,9 +3011,21 @@ def doors():
 
     lock_options = html_join(
         f'<option value="{h(lk["device_id"])}" {"selected" if lk["device_id"] == selected_device_id else ""}>'
-        f'{h(lk["name"])} ({h(lk["home"])})</option>'
+        f'{h(lk["name"])} ({h(lk["home"])}){"" if lk["online"] else " — offline"}</option>'
         for lk in locks
     )
+    # An offline lock still reports its last known state, and Kwikset's
+    # cloud can't deliver code changes to it -- say so up front rather than
+    # letting a Send fail.
+    selected_lock = next((lk for lk in locks if lk["device_id"] == selected_device_id), None)
+    if not error and selected_lock and not selected_lock["online"]:
+        seen = selected_lock["last_updated"]
+        seen_str = (
+            f" It last reported in on {format_date(seen.astimezone(ZoneInfo(POOL_TIMEZONE)).date())}."
+            if seen else ""
+        )
+        error = (f"{selected_lock['name']} is offline, so door codes can't be sent "
+                 f"to it or removed from it right now.{seen_str}")
     month_options = html_join(
         f'<option value="{y}-{m:02d}" {"selected" if sel else ""}>{label}</option>'
         for y, m, label, sel in _month_options(year, month)
@@ -2980,7 +3045,8 @@ def doors():
                 if selected_device_id else None
             )
             if existing:
-                status_label = f"Sent (slot {existing['slot']}, code {existing['code']})"
+                slot_str = existing["slot"] if existing["slot_confirmed"] else "unknown"
+                status_label = f"Sent (slot {slot_str}, code {existing['code']})"
                 status_class = "status-on"
             else:
                 status_label = "Not sent"
@@ -3045,12 +3111,13 @@ def doors():
                 lock_label=lock_name_by_id.get(row["device_id"], row["device_id"]),
                 guest_name=row["guest_name"] or "—",
                 code=row["code"] or "—",
-                slot=row["slot"],
+                slot=row["slot"] if row["slot_confirmed"] else "unknown",
+                slot_confirmed=bool(row["slot_confirmed"]),
+                code_id=row["id"],
                 window_str=_format_schedule_window(schedule),
                 expired_label="Expired" if expired else "Active",
                 expired_class="status-off" if expired else "status-on",
                 row_class="expired-row" if expired else "",
-                device_id=row["device_id"],
                 csrf_field=csrf_field(),
             ))
         all_codes_rows = html_join(code_rows)
@@ -3104,25 +3171,46 @@ def doors_send():
 
 @app.route("/doors/remove", methods=["POST"])
 def doors_remove():
-    device_id = request.form.get("device_id")
-    slot = request.form.get("slot")
-    if not device_id or not slot:
-        return "Missing device_id or slot", 400
     try:
-        slot = int(slot)
+        code_id = int(request.form.get("code_id") or "")
     except ValueError:
-        return "Invalid slot", 400
+        return "Missing or invalid code_id", 400
+    row = db_find_access_code(code_id)
+    if row is None:
+        return "That door code isn't on record -- try reloading the page", 404
+    # The slot comes from our own record, never from the form, and only a
+    # slot the lock itself reported may be deleted: a delete sent to any
+    # other slot erases whichever code actually lives there.
+    if not row["slot_confirmed"]:
+        return ("This code's slot was never confirmed by the lock, so removing "
+                "it here could erase a different code. Remove it in the Kwikset "
+                "app instead, then use 'Forget' to drop it from this list."), 400
 
     try:
         client = get_kwikset_client()
-        client.remove_access_code(device_id, slot)
+        client.remove_access_code(row["device_id"], row["slot"])
     except Exception as e:
         # Deliberately do NOT delete our own tracking record if the real
         # removal failed -- our record should only stop reflecting reality
         # once we've actually confirmed the lock-side removal succeeded.
         return f"Failed to remove door code: {e}", 500
 
-    _db_safe(db_delete_access_code_record, device_id, slot)
+    _db_safe(db_delete_access_code_record, code_id)
+    return redirect("/doors#all-codes")
+
+
+@app.route("/doors/forget", methods=["POST"])
+def doors_forget():
+    """Drops a code from this app's list WITHOUT touching the lock -- for
+    a code whose slot was never confirmed, after it has been removed in
+    the Kwikset app."""
+    try:
+        code_id = int(request.form.get("code_id") or "")
+    except ValueError:
+        return "Missing or invalid code_id", 400
+    if db_find_access_code(code_id) is None:
+        return "That door code isn't on record -- try reloading the page", 404
+    _db_safe(db_delete_access_code_record, code_id)
     return redirect("/doors#all-codes")
 
 
@@ -3157,19 +3245,14 @@ def doors_manual_add():
             "end": {"year": ey, "month": em, "day": ed, "hour": eh, "minute": emin},
         }
 
-    try:
-        client = get_kwikset_client()
-        slot = db_next_access_code_slot(device_id)
-        friendly_name = name[:14]
-        client.add_access_code(device_id=device_id, name=friendly_name, code=code, slot=slot, schedule=schedule)
-    except Exception as e:
-        return f"Failed to create door code: {e}", 500
-
     # booking_key is None here -- this code isn't tied to any guest
     # booking, so there's nothing to match it against in the guest
     # table above. It still shows up correctly in the "All Door Codes"
     # table below, same as any guest-sent code.
-    _db_safe(db_record_access_code, device_id, slot, None, friendly_name, code, schedule)
+    try:
+        add_door_code(device_id, name[:14], code, schedule)
+    except Exception as e:
+        return f"Failed to create door code: {e}", 500
     return redirect("/doors#all-codes")
 
 

@@ -10,6 +10,8 @@ the simple, well-documented REFRESH_TOKEN_AUTH flow plus REST calls.
 """
 import base64
 import datetime
+import time
+
 import requests
 
 from kwikset_codec import (
@@ -18,6 +20,8 @@ from kwikset_codec import (
     build_date_range_schedule_bytes,
     build_weekly_schedule_bytes,
     DeviceAccessScheduleType,
+    LOCK_ASSIGNS_SLOT,
+    parse_assigned_slot,
 )
 
 COGNITO_USER_POOL_CLIENT_ID = "5eu1cdkjp1itd1fi7b91m6g79s"
@@ -124,7 +128,21 @@ class KwiksetClient:
 
     @staticmethod
     def _summarize(device, home):
+        connectivity = _first(device, "deviceconnectivitystatus")
+        try:
+            updated = int(_first(device, "lastupdatedtimestamp", "lastupdatestatus") or 0)
+        except (TypeError, ValueError):
+            updated = 0
         return {
+            # A disconnected lock keeps reporting its last known state and
+            # battery, which can be days old -- surface that instead of
+            # letting stale values pass as live.
+            "connectivity": connectivity,
+            "online": connectivity is None or connectivity == "connected",
+            "last_updated": (
+                datetime.datetime.fromtimestamp(updated, datetime.timezone.utc)
+                if updated > 0 else None
+            ),
             "device_id": _first(device, "deviceid", "deviceId", "id"),
             "name": _first(device, "devicename", "deviceName", "name"),
             "home": _first(home, "homename", "homeName", "name") if home else None,
@@ -164,20 +182,49 @@ class KwiksetClient:
     def _access_code_request(self, device_id, method, payload: bytes):
         device, _ = self._find_device(device_id)
         did = _first(device, "deviceid", "deviceId", "id")
+        connectivity = _first(device, "deviceconnectivitystatus")
+        if connectivity is not None and connectivity != "connected":
+            raise ValidationError(
+                f"This lock reports connectivity {connectivity!r}, so Kwikset's "
+                "cloud can't deliver code changes to it. Bring it back online "
+                "(check its Wi-Fi in the Kwikset app) and try again."
+            )
         message = base64.b64encode(payload).decode("ascii")
         raw = self._api_request(f"prod_v1/devices/{did}/accesscode", method=method, body={"message": message})
-        return did, raw
+        entries = _first(raw, "data") if isinstance(raw, dict) else raw
+        entry = (entries or [{}])[0] or {}
+        token = _first(entry, "token", "synctoken", "accesscodetoken")
+        return did, raw, token
 
-    def add_access_code(self, device_id, name, code, slot, schedule=None):
+    def _poll_sync_status(self, did, token, attempts=8, interval_s=1.5):
+        """Polls the async sync-status endpoint after a create until the
+        lock reports the slot it chose. Returns the last raw response."""
+        last = None
+        if not token:
+            return last
+        for i in range(attempts):
+            if i:
+                time.sleep(interval_s)
+            try:
+                last = self._api_request(f"prod_v1/devices/{did}/accesscode/{token}")
+            except RuntimeError as e:
+                last = {"error": str(e)}
+            if parse_assigned_slot((last or {}).get("message")) is not None:
+                break
+        return last
+
+    def add_access_code(self, device_id, name, code, schedule=None):
         """Add a keypad access code. `schedule`, if given, is a dict:
         {"type": "date_range", "start": {...}, "end": {...}} with
         year/month/day/hour/minute keys (local wall-clock time). Omit for
-        a permanent, always-allowed code."""
+        a permanent, always-allowed code.
+
+        The lock picks the slot (lowest free, never an occupied one) and
+        reports it back; the returned "slot" is that reported slot, or None
+        if the lock didn't report one in time."""
         if not name or not str(name).strip():
             raise ValidationError("name is required.")
         self._validate_code_value(code)
-        if not isinstance(slot, int) or not (0 <= slot <= 255):
-            raise ValidationError(f"slot must be an integer 0-255, got {slot!r}")
 
         if schedule is None:
             schedule_type = DeviceAccessScheduleType.ALL_DAY
@@ -196,25 +243,31 @@ class KwiksetClient:
         friendly_name = str(name)[:14]
 
         payload = build_create_access_code_payload(
-            index=slot,
+            index=LOCK_ASSIGNS_SLOT,
             friendly_name=friendly_name,
             enabled=True,
             code=code,
             schedule_type=schedule_type,
             schedule_bytes=schedule_bytes,
         )
-        device_id_resolved, raw = self._access_code_request(device_id, "POST", payload)
+        did, raw, token = self._access_code_request(device_id, "POST", payload)
+        sync_status = self._poll_sync_status(did, token)
         return {
-            "slot": slot,
+            "slot": parse_assigned_slot((sync_status or {}).get("message")),
             "name": friendly_name,
             "code": str(code),
             "schedule": schedule,
             "raw_response": raw,
+            "sync_status": sync_status,
         }
 
     def remove_access_code(self, device_id, slot):
+        """Deletes whatever code lives in `slot`. Only ever pass a slot the
+        lock reported from add_access_code -- a guessed slot erases
+        whichever code is actually there. Kwikset's reply to a delete
+        carries no confirmation."""
         if not isinstance(slot, int) or not (0 <= slot <= 255):
             raise ValidationError(f"slot must be an integer 0-255, got {slot!r}")
         payload = build_delete_access_code_payload(slot)
-        device_id_resolved, raw = self._access_code_request(device_id, "DELETE", payload)
+        _did, raw, _token = self._access_code_request(device_id, "DELETE", payload)
         return {"slot": slot, "raw_response": raw}
