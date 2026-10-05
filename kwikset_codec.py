@@ -175,3 +175,48 @@ def build_delete_access_code_payload(index: int) -> bytes:
     if not isinstance(index, int) or not (0 <= index <= 255):
         raise ValueError(f"index must be an integer 0-255, got {index!r}")
     return tlv8_record(TxCommand.DELETE_DEVICE_ACCESS, bytes([index & 0xFF]))
+
+
+# Index to send on create when the lock should pick the slot itself. The
+# real app always sends 0 on the cloud path and lets the lock allocate.
+# Verified on a HALO-01: the lock takes the lowest free slot, reuses
+# deleted slots, and never overwrites an existing code. Ported from
+# kwikset-mcp-node's access-code-codec.js.
+LOCK_ASSIGNS_SLOT = 0
+
+_ASSIGNED_SLOT_RE = re.compile(r"^0301([0-9a-fA-F]{2})$")
+
+
+def parse_assigned_slot(message):
+    """The slot the lock assigned, from the sync-status `message` that
+    follows a create, e.g. "030104" -> 4: a hex TLV8 record of type 0x03,
+    length 0x01, value = the slot. Verified on a HALO-01 by deleting the
+    reported slot and confirming at the keypad that exactly that code
+    stopped working. Returns None for anything else (deletes reply with ""
+    or TOKEN_NOT_FOUND)."""
+    match = _ASSIGNED_SLOT_RE.match(str(message or "").strip())
+    return int(match.group(1), 16) if match else None
+
+
+RESERVED_CODE_PREFIX = "999999"
+UNIQUE_PREFIX_LENGTH = 4
+
+
+def check_code_rules(code, existing_codes=()):
+    """The real app's validation (AccessCodeLockExtKt.isAccessCodeAllowed):
+    reject a code equal to an existing one, sharing its first 4 digits with
+    one, or starting with 999999. `existing_codes` can only be the codes
+    this app knows about. Returns an error string, or None if allowed."""
+    value = str(code)
+    if value.startswith(RESERVED_CODE_PREFIX):
+        return f"Codes starting with {RESERVED_CODE_PREFIX} are reserved by the lock."
+    prefix = value[:UNIQUE_PREFIX_LENGTH]
+    for existing in (str(c) for c in existing_codes if c):
+        if existing == value:
+            return f"Code {value} is already on this lock."
+        if existing[:UNIQUE_PREFIX_LENGTH] == prefix:
+            return (
+                f"The first {UNIQUE_PREFIX_LENGTH} digits ({prefix}) match an existing "
+                "code on this lock; Kwikset requires them to be unique."
+            )
+    return None

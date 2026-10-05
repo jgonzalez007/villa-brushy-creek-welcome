@@ -442,8 +442,8 @@ lock, give it a name (max 14 characters -- Kwikset's own limit), and a
 
 Manual codes aren't tied to any guest booking, so they always show up
 in the "All Door Codes" table below but never in the guest table
-above. They use the same slot sequence as guest codes (see
-`KWIKSET_START_SLOT`), and can be removed the same way.
+above. Like guest codes, the lock picks their slot, and they can be
+removed the same way.
 
 ### All Door Codes
 
@@ -503,13 +503,33 @@ code works at the keypad or shows up in the Kwikset app afterward.**
   read codes back off the physical lock -- so if a code was added via
   the Kwikset app or the keypad directly, this page has no way to know
   about it, and won't show it as sent.
-- **Slot numbers are tracked locally**, starting from slot 5 per lock
-  (set via `KWIKSET_START_SLOT`, deliberately leaving 1-4 free since
-  those are the slots most likely to already be occupied by codes set
-  manually through the Kwikset app), with no visibility into slots
-  already used outside this app. If you've added 5+ codes manually via
-  the Kwikset app too, check there first to avoid a collision, since
-  Kwikset's API doesn't expose a way to check this automatically either.
+- **The lock picks each code's slot.** Like the official Kwikset app,
+  this sends slot 0 and the lock stores the code in its lowest free
+  slot -- reusing deleted slots, never overwriting an existing code --
+  then reports the slot it chose back in the sync-status reply
+  (`"0301XX"`, slot `XX` in hex). That reported slot is what's recorded.
+  Verified on a HALO-01: deleting the reported slot removed exactly that
+  code at the keypad.
+- **Remove only works for lock-confirmed slots.** A delete sent to any
+  other slot erases whichever code lives there -- that happened during
+  testing. A code whose slot shows "unknown" (the lock didn't report
+  one, or it was sent before this change, when slots were guessed)
+  can't be removed from here: remove it in the Kwikset app, then press
+  "Forget" to drop it from this list. Kwikset's reply to a delete
+  carries no confirmation, so check the keypad.
+- **Kwikset's code rules are enforced.** As in the Kwikset app, a code
+  whose first 4 digits match another code on the lock is refused (for
+  4-digit guest codes, that means the same code), as is any code
+  starting with `999999`. This app can only check against codes it sent
+  itself.
+- **Offline locks.** A lock that reports itself disconnected is marked
+  "offline" in the lock picker, with a banner saying when it last
+  reported in; Kwikset's cloud can't deliver code changes to it, so
+  sends and removes are refused until it's back online.
+- **The Kwikset app can lag.** It may keep showing a code removed from
+  here, and its own delete can fail silently until the app is
+  force-closed, reopened and refreshed. The keypad is the source of
+  truth.
 - **No edit.** To change a sent code, remove it (via the "All Door
   Codes" table at the bottom of the page) and send a new one -- there's
   no in-place edit.
@@ -526,8 +546,8 @@ code works at the keypad or shows up in the Kwikset app afterward.**
   included in the booking list) -- if a guest has no phone on file, the
   "Send code" button is disabled for them.
 
-This page has no login — don't share the URL publicly, since it can
-create real door access codes.
+Like every admin page, `/doors` requires a login -- see "Securing this
+site".
 
 ## Pool control
 

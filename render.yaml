@@ -50,8 +50,6 @@ services:
         sync: false        # optional -- omit to leave /doors showing "not connected"
       - key: KWIKSET_REFRESH_TOKEN
         sync: false        # optional -- from running auth-setup.js once, see README
-      - key: KWIKSET_START_SLOT
-        value: "5"          # slots below this are left alone -- avoids codes set manually via the Kwikset app
       - key: SECRET_KEY
         sync: false        # required for persistent sessions -- see README "Securing this site" section
       - key: ADMIN_USERNAME

@@ -202,7 +202,7 @@
   </table>
   </div>
 
-  <p class="footer-note">"Sent" only reflects codes this app itself has created -- Kwikset's API has no way to read codes back off the physical lock, so this can't detect codes added via the Kwikset app or keypad. Each guest's access window defaults to the setting above but can be changed per guest before sending. "Expired" is based on the code's own valid-until time, not a live check against the lock -- Kwikset's API can't confirm whether an expired code has actually stopped working, only that its scheduled window has passed. This page has no login — don't share the URL publicly, since it can create real door access codes.</p>
+  <p class="footer-note">"Sent" only reflects codes this app itself has created -- Kwikset's API has no way to read codes back off the physical lock, so this can't detect codes added via the Kwikset app or keypad. Each guest's access window defaults to the setting above but can be changed per guest before sending. "Expired" is based on the code's own valid-until time, not a live check against the lock -- Kwikset's API can't confirm whether an expired code has actually stopped working, only that its scheduled window has passed. The lock picks each new code's slot and reports it back; "unknown" means it didn't (or the code predates this), and such a code can only be removed in the Kwikset app — "Forget" then drops it from this list. Removing a code from here only works for slots the lock confirmed, and isn't confirmed back by Kwikset, so check the keypad. A code whose first 4 digits match one already on the lock is refused, as the Kwikset app does.</p>
   </div>
   </main>
 </div>
